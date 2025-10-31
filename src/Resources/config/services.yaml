@@ -1,0 +1,23 @@
+# 这个文件仅用于满足AutoExtension测试需求
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+    public: true
+
+  Tourze\OrderCartBundle\Command\:
+    resource: '../../Command/'
+  Tourze\OrderCartBundle\Controller\:
+    resource: '../../Controller/'
+  Tourze\OrderCartBundle\Repository\:
+    resource: '../../Repository/'
+  Tourze\OrderCartBundle\Procedure\:
+    resource: '../../Procedure/'
+  Tourze\OrderCartBundle\Service\:
+    resource: '../../Service/'
+  Tourze\OrderCartBundle\PriceCalculator\:
+    resource: '../../PriceCalculator/'
+  Tourze\OrderCartBundle\Validator\:
+    resource: '../../Validator/'
+  Tourze\OrderCartBundle\Decorator\:
+    resource: '../../Decorator/'
