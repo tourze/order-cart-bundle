@@ -35,10 +35,10 @@
     "tourze/doctrine-timestamp-bundle": "1.0.*",
     "tourze/easy-admin-menu-bundle": "1.0.*",
     "tourze/json-rpc-core": "1.0.*",
-    "tourze/json-rpc-lock-bundle": "0.1.*",
+    "tourze/json-rpc-lock-bundle": "1.0.*",
     "tourze/lock-service-bundle": "1.0.*",
     "tourze/product-core-bundle": "0.0.*",
-    "tourze/product-service-contracts": "0.0.*",
+    "tourze/product-service-contracts": "1.0.*",
     "tourze/stock-manage-bundle": "0.0.*",
     "tourze/symfony-dependency-service-loader": "1.*"
   },
