@@ -9,6 +9,7 @@ use Symfony\Bundle\SecurityBundle\SecurityBundle;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
 use Tourze\BundleDependency\BundleDependencyInterface;
 use Tourze\DoctrineSnowflakeBundle\DoctrineSnowflakeBundle;
+use Tourze\EasyAdminMenuBundle\EasyAdminMenuBundle;
 use Tourze\JsonRPCSecurityBundle\JsonRPCSecurityBundle;
 use Tourze\ProductCoreBundle\ProductCoreBundle;
 use Tourze\StockManageBundle\StockManageBundle;
@@ -24,6 +25,7 @@ class OrderCartBundle extends Bundle implements BundleDependencyInterface
             SecurityBundle::class => ['all' => true],
             StockManageBundle::class => ['all' => true],
             JsonRPCSecurityBundle::class => ['all' => true],
+            EasyAdminMenuBundle::class => ['all' => true],
         ];
     }
 }
