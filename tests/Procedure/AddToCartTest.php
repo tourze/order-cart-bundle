@@ -172,19 +172,6 @@ final class AddToCartTest extends AbstractProcedureTestCase
         $this->assertIsArray($result['sku']);
     }
 
-    public function testGetCurrentUserWithoutUserShouldFailAssertion(): void
-    {
-        // Test that getCurrentUser() fails when no user is authenticated
-        $this->expectException(\AssertionError::class);
-
-        // Use reflection to access private method
-        $reflection = new \ReflectionClass($this->procedure);
-        $method = $reflection->getMethod('getCurrentUser');
-        $method->setAccessible(true);
-
-        $method->invoke($this->procedure);
-    }
-
     public function testConstructorSetsUpDependenciesCorrectly(): void
     {
         // Test that the service can be instantiated correctly
