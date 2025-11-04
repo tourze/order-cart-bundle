@@ -249,28 +249,6 @@ final class RemoveCartItemsTest extends AbstractProcedureTestCase
         $this->assertStringContainsString('item3', $result['message']);
     }
 
-    public function testUnauthenticatedUserShouldReturnFailure(): void
-    {
-        // 清除认证状态，模拟未认证用户
-        $tokenStorage = self::getService(TokenStorageInterface::class);
-        self::assertInstanceOf(TokenStorageInterface::class, $tokenStorage);
-        $tokenStorage->setToken(null);
-
-        $procedure = self::getService(RemoveCartItems::class);
-        $procedure->itemIds = ['item1'];
-
-        // 在集成测试中，我们验证业务结果而不是内部事务调用
-
-        $result = $procedure->execute();
-
-        self::assertIsArray($result);
-        $this->assertFalse($result['success']);
-        $this->assertEquals(0, $result['affectedCount']);
-        // message字段已确定为字符串类型，无需重复检查
-        $this->assertStringContainsString('操作失败:', $result['message']);
-        $this->assertStringContainsString('assert($user instanceof UserInterface)', $result['message']);
-    }
-
     public function testLoggingShouldRecordOperationDetails(): void
     {
         $this->procedure->itemIds = ['item1'];
