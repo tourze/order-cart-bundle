@@ -211,7 +211,7 @@ final class CartAddLogCrudController extends AbstractCrudController
             ->displayIf(fn (CartAddLog $entity): bool => !$entity->isDeleted())
         ;
 
-        // 清理历史记录操作
+        // 清理历史记录操作（仅在详情页提供，避免索引页逐行链接触发删除导致后续链接失效）
         $cleanHistoryAction = Action::new('cleanHistory', '清理历史记录')
             ->linkToCrudAction('cleanHistory')
             ->setCssClass('btn btn-sm btn-danger')
@@ -224,12 +224,13 @@ final class CartAddLogCrudController extends AbstractCrudController
         // 添加自定义操作
         $actions->add(Crud::PAGE_INDEX, $restoreAction);
         $actions->add(Crud::PAGE_INDEX, $markDeletedAction);
-        $actions->add(Crud::PAGE_INDEX, $cleanHistoryAction);
+        // 仅在详情页提供清理历史记录动作
+        $actions->add(Crud::PAGE_DETAIL, $cleanHistoryAction);
         $actions->add(Crud::PAGE_DETAIL, $restoreAction);
         $actions->add(Crud::PAGE_DETAIL, $markDeletedAction);
 
-        // 重新排序操作按钮 (只包含INDEX页面上可用的动作)
-        $actions->reorder(Crud::PAGE_INDEX, [Action::DETAIL, 'restore', 'markDeleted', 'cleanHistory']);
+        // 重新排序行内操作按钮
+        $actions->reorder(Crud::PAGE_INDEX, [Action::DETAIL, 'restore', 'markDeleted']);
 
         // 禁用新增操作，因为这些记录是系统自动生成的
         $actions->disable(Action::NEW);

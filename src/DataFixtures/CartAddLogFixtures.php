@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tourze\OrderCartBundle\DataFixtures;
 
-use BizUserBundle\Entity\BizUser;
 use Doctrine\Bundle\FixturesBundle\Fixture;
 use Doctrine\Persistence\ObjectManager;
 use Symfony\Component\Security\Core\User\UserInterface;
@@ -12,10 +11,16 @@ use Tourze\OrderCartBundle\Entity\CartAddLog;
 use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\ProductCoreBundle\Entity\Sku;
 use Tourze\ProductCoreBundle\Entity\Spu;
+use Tourze\UserServiceContracts\UserManagerInterface;
 
 class CartAddLogFixtures extends Fixture
 {
     public const CART_ADD_LOG_REFERENCE = 'cart-add-log';
+
+    public function __construct(
+        private readonly UserManagerInterface $userManager,
+    ) {
+    }
 
     public function load(ObjectManager $manager): void
     {
@@ -85,8 +90,8 @@ class CartAddLogFixtures extends Fixture
 
         foreach ($userReferences as $reference) {
             try {
-                if ($this->hasReference($reference, BizUser::class)) {
-                    $users[] = $this->getReference($reference, BizUser::class);
+                if ($this->hasReference($reference, UserInterface::class)) {
+                    $users[] = $this->getReference($reference, UserInterface::class);
                 }
             } catch (\Exception $e) {
                 // 引用不存在，继续尝试下一个
@@ -146,11 +151,13 @@ class CartAddLogFixtures extends Fixture
     private function createBasicTestData(ObjectManager $manager): void
     {
         // 创建基本的测试用户
-        $testUser = new BizUser();
-        $testUser->setUsername('cart_log_fixtures_user_' . uniqid());
-        $testUser->setEmail('cartlog@localhost.test');
-        $testUser->setPasswordHash('$2y$13$test_hash');
-        $manager->persist($testUser);
+        $testUser = $this->userManager->createUser(
+            userIdentifier: 'cart_log_fixtures_user_' . uniqid(),
+            nickName: 'Cart Log Fixtures User',
+            password: 'test_password',
+            roles: ['ROLE_USER']
+        );
+        $this->userManager->saveUser($testUser);
 
         // 创建基本的测试SPU和SKU
         $testSpu = new Spu();

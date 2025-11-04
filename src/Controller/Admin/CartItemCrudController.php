@@ -136,7 +136,7 @@ final class CartItemCrudController extends AbstractCrudController
             ->setIcon('fa fa-check-square')
         ;
 
-        // 清空用户购物车操作
+        // 清空用户购物车操作（仅在详情页提供，避免索引页逐行链接触发批量删除导致后续链接失效）
         $clearUserCartAction = Action::new('clearUserCart', '清空用户购物车')
             ->linkToCrudAction('clearUserCart')
             ->setCssClass('btn btn-sm btn-danger')
@@ -148,11 +148,11 @@ final class CartItemCrudController extends AbstractCrudController
 
         // 添加自定义操作
         $actions->add(Crud::PAGE_INDEX, $toggleSelectedAction);
-        $actions->add(Crud::PAGE_INDEX, $clearUserCartAction);
         $actions->add(Crud::PAGE_DETAIL, $toggleSelectedAction);
+        $actions->add(Crud::PAGE_DETAIL, $clearUserCartAction);
 
-        // 重新排序操作按钮 (只包含INDEX页面可用的动作)
-        $actions->reorder(Crud::PAGE_INDEX, [Action::DETAIL, 'toggleSelected', 'clearUserCart']);
+        // 重新排序行内操作按钮
+        $actions->reorder(Crud::PAGE_INDEX, [Action::DETAIL, 'toggleSelected']);
 
         return $actions;
     }

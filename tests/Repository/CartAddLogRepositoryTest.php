@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tourze\OrderCartBundle\Tests\Repository;
 
-use BizUserBundle\Entity\BizUser;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use Symfony\Component\Security\Core\User\UserInterface;
 use Tourze\OrderCartBundle\Entity\CartAddLog;
 use Tourze\OrderCartBundle\Repository\CartAddLogRepository;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractRepositoryTestCase;
@@ -20,9 +20,9 @@ use Tourze\ProductCoreBundle\Entity\Spu;
 #[CoversClass(CartAddLogRepository::class)]
 final class CartAddLogRepositoryTest extends AbstractRepositoryTestCase
 {
-    private BizUser $testUser;
+    private UserInterface $testUser;
 
-    private BizUser $otherUser;
+    private UserInterface $otherUser;
 
     private Sku $testSku1;
 
@@ -83,10 +83,7 @@ final class CartAddLogRepositoryTest extends AbstractRepositoryTestCase
 
     public function testFindByUserWithNonExistentUserShouldReturnEmptyArray(): void
     {
-        $nonExistentUser = new BizUser();
-        $nonExistentUser->setUsername('nonexistent');
-        $nonExistentUser->setEmail('nonexistent@example.com');
-        $nonExistentUser->setPasswordHash('$2y$13$hashed_password');
+        $nonExistentUser = $this->createUser('nonexistent', 'password', ['ROLE_USER']);
 
         $results = $this->getRepository()->findByUser($nonExistentUser);
 
@@ -217,10 +214,7 @@ final class CartAddLogRepositoryTest extends AbstractRepositoryTestCase
 
     public function testCountByUserWithNonExistentUserShouldReturnZero(): void
     {
-        $nonExistentUser = new BizUser();
-        $nonExistentUser->setUsername('nobody_cartlog');
-        $nonExistentUser->setEmail('nobody_cartlog@example.com');
-        $nonExistentUser->setPasswordHash('$2y$13$hashed_password');
+        $nonExistentUser = $this->createUser('nobody_cartlog', 'password', ['ROLE_USER']);
 
         $count = $this->getRepository()->countByUser($nonExistentUser);
 
@@ -316,10 +310,7 @@ final class CartAddLogRepositoryTest extends AbstractRepositoryTestCase
     public function testQueryParametersShouldBeProperlyEscapedToPreventInjection(): void
     {
         // 使用包含特殊字符的用户标识符
-        $maliciousUser = new BizUser();
-        $maliciousUser->setUsername('malicious_cartlog');
-        $maliciousUser->setEmail('malicious_cartlog@example.com');
-        $maliciousUser->setPasswordHash('$2y$13$hashed_password');
+        $maliciousUser = $this->createUser('malicious_cartlog', 'password', ['ROLE_USER']);
 
         // 这些查询不应该导致SQL注入或异常
         $results1 = $this->getRepository()->findByUser($maliciousUser);
@@ -339,21 +330,11 @@ final class CartAddLogRepositoryTest extends AbstractRepositoryTestCase
 
     protected function onSetUp(): void
     {
-        // 创建测试用户
-        $this->testUser = new BizUser();
-        $this->testUser->setUsername('cartlog_testuser');
-        $this->testUser->setEmail('cartlog_testuser@example.com');
-        $this->testUser->setPasswordHash('$2y$13$hashed_password');
-
-        $this->otherUser = new BizUser();
-        $this->otherUser->setUsername('cartlog_otheruser');
-        $this->otherUser->setEmail('cartlog_otheruser@example.com');
-        $this->otherUser->setPasswordHash('$2y$13$hashed_password');
-
-        // 持久化测试用户
         $em = self::getEntityManager();
-        $em->persist($this->testUser);
-        $em->persist($this->otherUser);
+
+        // 创建测试用户
+        $this->testUser = $this->createUser('cartlog_testuser', 'test_password', ['ROLE_USER']);
+        $this->otherUser = $this->createUser('cartlog_otheruser', 'test_password', ['ROLE_USER']);
 
         // 创建测试SPU
         $spu1 = new Spu();
@@ -387,7 +368,7 @@ final class CartAddLogRepositoryTest extends AbstractRepositoryTestCase
     }
 
     private function createCartAddLog(
-        BizUser $user,
+        UserInterface $user,
         Sku $sku,
         string $cartItemId,
         int $quantity,

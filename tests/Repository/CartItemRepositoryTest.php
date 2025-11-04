@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tourze\OrderCartBundle\Tests\Repository;
 
-use BizUserBundle\Entity\BizUser;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use Symfony\Component\Security\Core\User\UserInterface;
 use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\OrderCartBundle\Repository\CartItemRepository;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractRepositoryTestCase;
@@ -20,7 +20,7 @@ use Tourze\ProductCoreBundle\Entity\Spu;
 #[CoversClass(CartItemRepository::class)]
 final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 {
-    private BizUser $testUser;
+    private UserInterface $testUser;
 
     private Sku $testSku1;
 
@@ -29,14 +29,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
     protected function onSetUp(): void
     {
         // 创建测试用户
-        $this->testUser = new BizUser();
-        $this->testUser->setUsername('testuser');
-        $this->testUser->setEmail('testuser@example.com');
-        $this->testUser->setPasswordHash('$2y$13$hashed_password');
-
-        // 持久化测试用户
-        $em = self::getEntityManager();
-        $em->persist($this->testUser);
+        $this->testUser = $this->createUser('testuser', 'test_password', ['ROLE_USER']);
 
         // 创建测试SPU
         $spu1 = new Spu();
@@ -66,11 +59,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
         // 创建一个基础的CartItem作为测试数据，满足父类testCountWithDataFixtureShouldReturnGreaterThanZero的要求
         // 使用独立的用户避免与其他测试的unique约束冲突
-        $baselineUser = new BizUser();
-        $baselineUser->setUsername('baseline_user');
-        $baselineUser->setEmail('baseline@test.com');
-        $baselineUser->setPasswordHash('$2y$13$baseline_hash');
-        $em->persist($baselineUser);
+        $baselineUser = $this->createUser('baseline_user', 'baseline_password', ['ROLE_USER']);
 
         $baselineCartItem = new CartItem();
         $baselineCartItem->setUser($baselineUser);
@@ -165,10 +154,9 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
     public function testFindByUserWithNonExistentUserShouldReturnEmptyArray(): void
     {
-        $nonExistentUser = new BizUser();
-        $nonExistentUser->setUsername('nonexistent');
-        $nonExistentUser->setEmail('nonexistent@example.com');
-        $nonExistentUser->setPasswordHash('$2y$13$hashed_password');
+        // 创建未持久化的用户（模拟不存在的用户）
+        $nonExistentUser = $this->createUser('nonexistent', 'password', ['ROLE_USER']);
+        // 注意：此用户虽然已创建但可以用于测试查询不到数据的情况
 
         $results = $this->getRepository()->findByUser($nonExistentUser);
 
@@ -207,12 +195,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
         self::assertInstanceOf(CartItemRepository::class, $repository);
         $repository->save($cartItem);
 
-        $otherUser = new BizUser();
-        $otherUser->setUsername('other');
-        $otherUser->setEmail('other@example.com');
-        $otherUser->setPasswordHash('$2y$13$hashed_password');
-        self::getEntityManager()->persist($otherUser);
-        self::getEntityManager()->flush();
+        $otherUser = $this->createUser('other', 'password', ['ROLE_USER']);
 
         $cartItemId = $cartItem->getId();
         $this->assertNotNull($cartItemId, 'CartItem should have an ID after save');
@@ -296,12 +279,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
         self::assertInstanceOf(CartItemRepository::class, $repository);
         $repository->save($cartItem);
 
-        $otherUser = new BizUser();
-        $otherUser->setUsername('another');
-        $otherUser->setEmail('another@example.com');
-        $otherUser->setPasswordHash('$2y$13$hashed_password');
-        self::getEntityManager()->persist($otherUser);
-        self::getEntityManager()->flush();
+        $otherUser = $this->createUser('another', 'password', ['ROLE_USER']);
 
         $result = $this->getRepository()->findByUserAndSku($otherUser, $this->testSku1);
 
@@ -321,10 +299,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
     public function testCountByUserWithNonExistentUserShouldReturnZero(): void
     {
-        $nonExistentUser = new BizUser();
-        $nonExistentUser->setUsername('nobody');
-        $nonExistentUser->setEmail('nobody@example.com');
-        $nonExistentUser->setPasswordHash('$2y$13$hashed_password');
+        $nonExistentUser = $this->createUser('nobody', 'password', ['ROLE_USER']);
 
         $count = $this->getRepository()->countByUser($nonExistentUser);
 
@@ -333,12 +308,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
     public function testCountByUserShouldOnlyCountCurrentUserItems(): void
     {
-        $otherUser = new BizUser();
-        $otherUser->setUsername('other');
-        $otherUser->setEmail('other@example.com');
-        $otherUser->setPasswordHash('$2y$13$hashed_password');
-        self::getEntityManager()->persist($otherUser);
-        self::getEntityManager()->flush();
+        $otherUser = $this->createUser('other', 'password', ['ROLE_USER']);
 
         // 创建当前用户的项目
         $userItem1 = $this->createCartItem($this->testUser, $this->testSku1, 1);
@@ -403,12 +373,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
     public function testFindSelectedByUserShouldOnlyReturnCurrentUserSelectedItems(): void
     {
-        $otherUser = new BizUser();
-        $otherUser->setUsername('other');
-        $otherUser->setEmail('other@example.com');
-        $otherUser->setPasswordHash('$2y$13$hashed_password');
-        self::getEntityManager()->persist($otherUser);
-        self::getEntityManager()->flush();
+        $otherUser = $this->createUser('other', 'password', ['ROLE_USER']);
 
         // 当前用户的选中项目
         $currentUserSelectedItem = $this->createCartItem($this->testUser, $this->testSku1, 2, true);
@@ -506,10 +471,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
     public function testQueryParametersShouldBeProperlyEscapedToPreventInjection(): void
     {
         // 使用包含特殊字符的用户标识符
-        $maliciousUser = new BizUser();
-        $maliciousUser->setUsername('malicious');
-        $maliciousUser->setEmail('malicious@example.com');
-        $maliciousUser->setPasswordHash('$2y$13$hashed_password');
+        $maliciousUser = $this->createUser('malicious', 'password', ['ROLE_USER']);
 
         // 这些查询不应该导致SQL注入或异常
         $results1 = $this->getRepository()->findByUser($maliciousUser);
@@ -607,12 +569,7 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
     public function testUpdateAllCheckedStatusShouldOnlyAffectCurrentUserItems(): void
     {
-        $otherUser = new BizUser();
-        $otherUser->setUsername('other_batch_user');
-        $otherUser->setEmail('other_batch_user@example.com');
-        $otherUser->setPasswordHash('$2y$13$hashed_password');
-        self::getEntityManager()->persist($otherUser);
-        self::getEntityManager()->flush();
+        $otherUser = $this->createUser('other_batch_user', 'password', ['ROLE_USER']);
 
         $currentUserItem = $this->createCartItem($this->testUser, $this->testSku1, 1, false);
         $otherUserItem = $this->createCartItem($otherUser, $this->testSku2, 2, false);
@@ -645,17 +602,14 @@ final class CartItemRepositoryTest extends AbstractRepositoryTestCase
 
     public function testGetTotalQuantityByUserWithNoItemsShouldReturnZero(): void
     {
-        $newUser = new BizUser();
-        $newUser->setUsername('no_items_user');
-        $newUser->setEmail('no_items_user@example.com');
-        $newUser->setPasswordHash('$2y$13$hashed_password');
+        $newUser = $this->createUser('no_items_user', 'password', ['ROLE_USER']);
 
         $totalQuantity = $this->getRepository()->getTotalQuantityByUser($newUser);
 
         $this->assertEquals(0, $totalQuantity, 'getTotalQuantityByUser对无项目用户应返回0');
     }
 
-    private function createCartItem(BizUser $user, Sku $sku, int $quantity, bool $selected = true): CartItem
+    private function createCartItem(UserInterface $user, Sku $sku, int $quantity, bool $selected = true): CartItem
     {
         // 检查是否存在相同user+sku的组合，如果存在则删除或使用新的唯一SKU
         $existingItem = $this->getRepository()->findByUserAndSku($user, $sku);
