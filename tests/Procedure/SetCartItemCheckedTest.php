@@ -438,8 +438,8 @@ final class SetCartItemCheckedTest extends AbstractProcedureTestCase
 
     private function createCartItem(string $id): CartItem
     {
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn($id);
+        $cartItem = new CartItem();
+        $cartItem->setId($id);
 
         return $cartItem;
     }

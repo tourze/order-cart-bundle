@@ -50,8 +50,8 @@ final class CartCacheServiceTest extends AbstractIntegrationTestCase
 
     public function testClearSpecificCartCacheShouldExecuteWithoutError(): void
     {
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn('item123');
+        $cartItem = new CartItem();
+        $cartItem->setId('item123');
 
         $this->expectNotToPerformAssertions();
         $this->service->clearSpecificCartCache($this->user, [$cartItem]);

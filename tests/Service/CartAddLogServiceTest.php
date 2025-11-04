@@ -34,8 +34,8 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
         $user = $this->createMock(UserInterface::class);
         $user->method('getUserIdentifier')->willReturn('testuser@example.com');
 
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn('cart_item_123');
+        $cartItem = new CartItem();
+        $cartItem->setId('cart_item_123');
 
         // 创建真实的SKU对象来避免类型错误
         $sku = $this->createRealSku();
@@ -126,9 +126,9 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
 
         $sku = $this->createRealSku();
 
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn('cart_item_456');
-        $cartItem->method('getSku')->willReturn($sku);
+        $cartItem = new CartItem();
+        $cartItem->setId('cart_item_456');
+        $cartItem->setSku($sku);
 
         $this->repository->expects($this->once())
             ->method('save')
@@ -168,8 +168,8 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
         $user = $this->createMock(UserInterface::class);
         $user->method('getUserIdentifier')->willReturn('testuser@example.com');
 
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn('cart_item_789');
+        $cartItem = new CartItem();
+        $cartItem->setId('cart_item_789');
 
         // 创建真实的SKU对象来避免类型错误
         $sku = $this->createRealSku();
@@ -425,8 +425,8 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
     public function testCreateSkuSnapshotShouldIncludeAllSkuData(): void
     {
         $user = $this->createMock(UserInterface::class);
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn('cart_item_snapshot_test');
+        $cartItem = new CartItem();
+        $cartItem->setId('cart_item_snapshot_test');
 
         $this->repository->expects($this->once())
             ->method('save')
@@ -463,8 +463,8 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
     public function testCreatePriceSnapshotShouldIncludePriceData(): void
     {
         $user = $this->createMock(UserInterface::class);
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getId')->willReturn('cart_item_price_test');
+        $cartItem = new CartItem();
+        $cartItem->setId('cart_item_price_test');
 
         // 创建真实的SKU对象来避免类型错误
         $realSku = $this->createRealSku();
