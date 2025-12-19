@@ -13,10 +13,12 @@ use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\Validator\Constraints as Assert;
 use Tourze\JsonRPC\Core\Attribute\MethodDoc;
 use Tourze\JsonRPC\Core\Attribute\MethodExpose;
-use Tourze\JsonRPC\Core\Attribute\MethodParam;
 use Tourze\JsonRPC\Core\Attribute\MethodTag;
+use Tourze\JsonRPC\Core\Contracts\RpcParamInterface;
+use Tourze\JsonRPC\Core\Result\ArrayResult;
 use Tourze\JsonRPCLockBundle\Procedure\LockableProcedure;
 use Tourze\OrderCartBundle\DTO\CartOperationResponse;
+use Tourze\OrderCartBundle\Param\RemoveFromCartParam;
 use Tourze\OrderCartBundle\Exception\CartValidationException;
 use Tourze\OrderCartBundle\Interface\CartManagerInterface;
 
@@ -27,9 +29,6 @@ use Tourze\OrderCartBundle\Interface\CartManagerInterface;
 #[WithMonologChannel(channel: 'order_cart')]
 final class RemoveFromCart extends LockableProcedure
 {
-    #[MethodParam(description: '购物车商品ID')]
-    public string $cartItemId = '';
-
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly CartManagerInterface $cartManager,
@@ -39,23 +38,23 @@ final class RemoveFromCart extends LockableProcedure
     }
 
     /**
-     * @return array<string, mixed>
+     * @phpstan-param RemoveFromCartParam $param
      */
-    public function execute(): array
+    public function execute(RemoveFromCartParam|RpcParamInterface $param): ArrayResult
     {
         try {
-            $this->validateInput();
+            $this->validateInput($param);
             $user = $this->getCurrentUser();
 
             $this->procedureLogger->info('从购物车移除商品', [
                 'user_id' => $user->getUserIdentifier(),
-                'cart_item_id' => $this->cartItemId,
+                'cart_item_id' => $param->cartItemId,
             ]);
 
             $this->entityManager->beginTransaction();
 
             try {
-                $this->cartManager->removeItem($user, $this->cartItemId);
+                $this->cartManager->removeItem($user, $param->cartItemId);
 
                 $totalItems = $this->cartManager->getCartItemCount($user);
                 $totalQuantity = $this->cartManager->getCartTotalQuantity($user);
@@ -74,7 +73,7 @@ final class RemoveFromCart extends LockableProcedure
                     'affected_count' => $response->affectedCount,
                 ]);
 
-                return $response->toArray();
+                return new ArrayResult($response->toArray());
             } catch (\Throwable $e) {
                 $this->entityManager->rollback();
                 throw $e;
@@ -87,13 +86,13 @@ final class RemoveFromCart extends LockableProcedure
 
             $errorResponse = CartOperationResponse::failure('操作失败: ' . $e->getMessage());
 
-            return $errorResponse->toArray();
+            return new ArrayResult($errorResponse->toArray());
         }
     }
 
-    private function validateInput(): void
+    private function validateInput(RemoveFromCartParam $param): void
     {
-        if ('' === $this->cartItemId || '' === trim($this->cartItemId)) {
+        if ('' === $param->cartItemId || '' === trim($param->cartItemId)) {
             throw CartValidationException::invalidCartItemId();
         }
     }
@@ -104,16 +103,5 @@ final class RemoveFromCart extends LockableProcedure
         assert($user instanceof UserInterface);
 
         return $user;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public static function getMockResult(): array
-    {
-        return [
-            'success' => true,
-            'message' => '商品已从购物车移除',
-        ];
     }
 }

@@ -10,10 +10,12 @@ use Symfony\Component\Security\Core\User\UserInterface;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Tourze\JsonRPC\Core\Attribute\MethodDoc;
 use Tourze\JsonRPC\Core\Attribute\MethodExpose;
-use Tourze\JsonRPC\Core\Attribute\MethodParam;
 use Tourze\JsonRPC\Core\Attribute\MethodTag;
+use Tourze\JsonRPC\Core\Contracts\RpcParamInterface;
+use Tourze\JsonRPC\Core\Result\ArrayResult;
 use Tourze\JsonRPC\Core\Procedure\BaseProcedure;
 use Tourze\OrderCartBundle\DTO\CartOperationResponse;
+use Tourze\OrderCartBundle\Param\CheckAllCartItemsParam;
 use Tourze\OrderCartBundle\Exception\CartValidationException;
 use Tourze\OrderCartBundle\Repository\CartItemRepository;
 
@@ -24,9 +26,6 @@ use Tourze\OrderCartBundle\Repository\CartItemRepository;
 #[WithMonologChannel(channel: 'order_cart')]
 final class CheckAllCartItems extends BaseProcedure
 {
-    #[MethodParam(description: '选中状态')]
-    public bool $checked = false;
-
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly CartItemRepository $cartItemRepository,
@@ -36,9 +35,9 @@ final class CheckAllCartItems extends BaseProcedure
     }
 
     /**
-     * @return array<string, mixed>
+     * @phpstan-param CheckAllCartItemsParam $param
      */
-    public function execute(): array
+    public function execute(CheckAllCartItemsParam|RpcParamInterface $param): ArrayResult
     {
         try {
             $user = $this->getCurrentUser();
@@ -46,13 +45,13 @@ final class CheckAllCartItems extends BaseProcedure
 
             $this->procedureLogger->info('全选/取消全选购物车项目', [
                 'user_id' => $user->getUserIdentifier(),
-                'checked' => $this->checked,
+                'checked' => $param->checked,
             ]);
 
             $this->entityManager->beginTransaction();
 
             try {
-                $affectedCount = $this->cartItemRepository->updateAllCheckedStatus($user, $this->checked);
+                $affectedCount = $this->cartItemRepository->updateAllCheckedStatus($user, $param->checked);
 
                 $totalItems = $this->cartItemRepository->countByUser($user);
                 $totalQuantity = $this->cartItemRepository->getTotalQuantityByUser($user);
@@ -63,7 +62,7 @@ final class CheckAllCartItems extends BaseProcedure
                     $affectedCount,
                     $totalItems,
                     $totalQuantity,
-                    sprintf('成功%s所有购物车项目（%d个）', $this->checked ? '勾选' : '取消勾选', $affectedCount)
+                    sprintf('成功%s所有购物车项目（%d个）', $param->checked ? '勾选' : '取消勾选', $affectedCount)
                 );
 
                 $this->procedureLogger->info('全选/取消全选购物车项目完成', [
@@ -71,7 +70,7 @@ final class CheckAllCartItems extends BaseProcedure
                     'affected_count' => $response->affectedCount,
                 ]);
 
-                return $response->toArray();
+                return new ArrayResult($response->toArray());
             } catch (\Throwable $e) {
                 $this->entityManager->rollback();
                 throw $e;
@@ -84,7 +83,7 @@ final class CheckAllCartItems extends BaseProcedure
 
             $errorResponse = CartOperationResponse::failure('操作失败: ' . $e->getMessage());
 
-            return $errorResponse->toArray();
+            return new ArrayResult($errorResponse->toArray());
         }
     }
 

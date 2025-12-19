@@ -29,7 +29,7 @@ final class SkuAvailabilityValidatorTest extends TestCase
 
     private UserInterface $user;
 
-    private Sku $sku;
+    private MockObject&Sku $sku;
 
     protected function setUp(): void
     {
@@ -49,8 +49,9 @@ final class SkuAvailabilityValidatorTest extends TestCase
             ->willReturn($this->sku)
         ;
 
-        $stockSummary = $this->createMock(StockSummary::class);
-        $stockSummary->method('getAvailableQuantity')->willReturn(10);
+        // 使用真实 StockSummary 对象而非 Mock（StockSummary 是 final 类）
+        $stockSummary = new StockSummary('spu-123');
+        $stockSummary->setAvailableQuantity(10);
 
         $this->stockService->expects($this->once())
             ->method('getAvailableStock')
@@ -80,8 +81,9 @@ final class SkuAvailabilityValidatorTest extends TestCase
 
         $this->skuLoader->method('loadSkuByIdentifier')->with('123')->willReturn($this->sku);
 
-        $stockSummary = $this->createMock(StockSummary::class);
-        $stockSummary->method('getAvailableQuantity')->willReturn(3); // Less than required
+        // 使用真实 StockSummary 对象而非 Mock（StockSummary 是 final 类）
+        $stockSummary = new StockSummary('spu-123');
+        $stockSummary->setAvailableQuantity(3); // Less than required
 
         $this->stockService->method('getAvailableStock')->with($this->sku)->willReturn($stockSummary);
 

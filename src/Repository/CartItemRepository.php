@@ -17,7 +17,7 @@ use Tourze\ProductCoreBundle\Entity\Sku;
  */
 #[AsRepository(entityClass: CartItem::class)]
 #[Autoconfigure(public: true)]
-class CartItemRepository extends ServiceEntityRepository
+final class CartItemRepository extends ServiceEntityRepository
 {
     public function __construct(ManagerRegistry $registry)
     {

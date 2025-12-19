@@ -6,129 +6,323 @@ namespace Tourze\OrderCartBundle\Tests\Service;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use Symfony\Component\Security\Core\User\UserInterface;
+use Tourze\OrderCartBundle\DTO\CartTotalResponse;
+use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\OrderCartBundle\Service\PriceCalculationService;
 use Tourze\OrderCartBundle\Service\PriceCalculationServiceInterface;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
+use Tourze\ProductCoreBundle\Entity\Sku;
+use Tourze\ProductCoreBundle\Entity\Spu;
+use Tourze\StockManageBundle\Entity\StockBatch;
 
 /**
- * @internal
+ * PriceCalculationService 集成测试
  *
- * PriceCalculationService依赖final ProductCoreBundle类，无法进行Mock测试。
- * 该服务的完整功能测试应该在项目的集成测试中进行。
- * 这里通过行为测试验证服务的基本功能。
+ * @internal
  */
 #[CoversClass(PriceCalculationService::class)]
 #[RunTestsInSeparateProcesses]
 final class PriceCalculationServiceTest extends AbstractIntegrationTestCase
 {
+    private PriceCalculationService $service;
+    private UserInterface $testUser;
+
     protected function onSetUp(): void
     {
-        // 使用行为测试而非反射测试
+        $this->service = self::getService(PriceCalculationService::class);
+        $this->testUser = $this->createUser('price_calc_test_user', 'test_password', ['ROLE_USER']);
+    }
+
+    private function createTestSkuWithStock(string $marketPrice = '99.99'): Sku
+    {
+        $em = self::getEntityManager();
+
+        $spu = new Spu();
+        $spu->setTitle('Test Product ' . uniqid());
+        $em->persist($spu);
+
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        $sku->setMarketPrice($marketPrice);
+        $em->persist($sku);
+
+        $em->flush();
+
+        $stockBatch = new StockBatch();
+        $stockBatch->setSku($sku);
+        $stockBatch->setBatchNo('BATCH-' . uniqid());
+        $stockBatch->setQuantity(1000);
+        $stockBatch->setAvailableQuantity(1000);
+        $stockBatch->setStatus('available');
+        $em->persist($stockBatch);
+        $em->flush();
+
+        return $sku;
+    }
+
+    private function createTestSkuWithoutPrice(): Sku
+    {
+        $em = self::getEntityManager();
+
+        $spu = new Spu();
+        $spu->setTitle('Test Product Without Price ' . uniqid());
+        $em->persist($spu);
+
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        // 不设置价格
+        $em->persist($sku);
+
+        $em->flush();
+
+        return $sku;
+    }
+
+    private function createCartItem(UserInterface $user, Sku $sku, int $quantity = 1, bool $selected = true): CartItem
+    {
+        $em = self::getEntityManager();
+
+        $cartItem = new CartItem();
+        $cartItem->setUser($user);
+        $cartItem->setSku($sku);
+        $cartItem->setQuantity($quantity);
+        $cartItem->setSelected($selected);
+        $em->persist($cartItem);
+        $em->flush();
+
+        return $cartItem;
     }
 
     public function testServiceImplementsRequiredInterface(): void
     {
-        // 验证服务实现了接口
-        $service = self::getService(PriceCalculationService::class);
-        $this->assertInstanceOf(PriceCalculationServiceInterface::class, $service);
+        $this->assertInstanceOf(PriceCalculationServiceInterface::class, $this->service);
     }
 
     public function testServiceCanBeInstantiated(): void
     {
-        // 验证服务可以通过容器获取，说明依赖配置正确
-        $service = self::getService(PriceCalculationService::class);
-        $this->assertInstanceOf(PriceCalculationService::class, $service);
-        $this->assertInstanceOf(PriceCalculationServiceInterface::class, $service);
+        $this->assertInstanceOf(PriceCalculationService::class, $this->service);
+        $this->assertInstanceOf(PriceCalculationServiceInterface::class, $this->service);
     }
 
-    public function testServiceProvidesRequiredMethods(): void
+    public function testCalculateCartTotalWithEmptyCart(): void
     {
-        // 使用行为测试验证服务具有所需方法，而非反射检查方法签名
-        $service = self::getService(PriceCalculationService::class);
+        $result = $this->service->calculateCartTotal($this->testUser, []);
 
-        // 验证方法可被调用，说明它们存在且可访问
-        $availableMethods = [
-            'calculateCartTotal',
-            'calculateProductTotal',
-            'calculatePromotionDiscount',
-            'calculateShippingFee',
-            'checkPriceChanges',
-        ];
-
-        $this->assertContains('calculateCartTotal', $availableMethods, 'Service should have calculateCartTotal method');
-        $this->assertContains('calculateProductTotal', $availableMethods, 'Service should have calculateProductTotal method');
-        $this->assertContains('calculatePromotionDiscount', $availableMethods, 'Service should have calculatePromotionDiscount method');
-        $this->assertContains('calculateShippingFee', $availableMethods, 'Service should have calculateShippingFee method');
-        $this->assertContains('checkPriceChanges', $availableMethods, 'Service should have checkPriceChanges method');
+        $this->assertInstanceOf(CartTotalResponse::class, $result);
+        $this->assertTrue($result->success);
+        $this->assertEquals('0.00', $result->originalAmount);
+        $this->assertEquals('0.00', $result->productAmount);
+        $this->assertEquals('0.00', $result->discountAmount);
+        $this->assertEquals('0.00', $result->shippingFee);
+        $this->assertEquals('0.00', $result->totalAmount);
     }
 
-    public function testServiceIsProperlyConfigured(): void
+    public function testCalculateCartTotalWithSingleItem(): void
     {
-        // 验证服务可以从容器中获取，说明依赖注入配置正确
-        $service = self::getService(PriceCalculationService::class);
-        $this->assertInstanceOf(PriceCalculationService::class, $service);
+        $sku = $this->createTestSkuWithStock('100.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2, true);
 
-        // 验证服务实现了所需接口
-        $this->assertInstanceOf(PriceCalculationServiceInterface::class, $service);
+        $result = $this->service->calculateCartTotal($this->testUser, [$cartItem]);
+
+        $this->assertInstanceOf(CartTotalResponse::class, $result);
+        $this->assertTrue($result->success);
+        $this->assertEquals('200.00', $result->originalAmount);
     }
 
-    public function testCalculateCartTotal(): void
+    public function testCalculateCartTotalWithMultipleItems(): void
     {
-        $service = self::getService(PriceCalculationService::class);
+        $sku1 = $this->createTestSkuWithStock('100.00');
+        $sku2 = $this->createTestSkuWithStock('50.00');
 
-        // 测试方法存在且可被调用
-        $this->assertTrue(method_exists($service, 'calculateCartTotal'));
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 2, true); // 200.00
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 3, true); // 150.00
 
-        // 验证方法签名通过反射（不依赖具体数据）
-        $reflection = new \ReflectionMethod($service, 'calculateCartTotal');
-        $this->assertTrue($reflection->isPublic());
+        $result = $this->service->calculateCartTotal($this->testUser, [$cartItem1, $cartItem2]);
+
+        $this->assertInstanceOf(CartTotalResponse::class, $result);
+        $this->assertTrue($result->success);
+        $this->assertEquals('350.00', $result->originalAmount);
+    }
+
+    public function testCalculateCartTotalOnlyCountsSelectedItems(): void
+    {
+        $sku1 = $this->createTestSkuWithStock('100.00');
+        $sku2 = $this->createTestSkuWithStock('50.00');
+
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 2, true);  // 200.00 (选中)
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 3, false); // 150.00 (未选中)
+
+        $result = $this->service->calculateCartTotal($this->testUser, [$cartItem1, $cartItem2]);
+
+        $this->assertInstanceOf(CartTotalResponse::class, $result);
+        $this->assertTrue($result->success);
+        // 只有选中的项目被计入
+        $this->assertEquals('200.00', $result->originalAmount);
     }
 
     public function testCalculateProductTotal(): void
     {
-        $service = self::getService(PriceCalculationService::class);
+        $sku1 = $this->createTestSkuWithStock('100.00');
+        $sku2 = $this->createTestSkuWithStock('50.00');
 
-        // 测试方法存在且可被调用
-        $this->assertTrue(method_exists($service, 'calculateProductTotal'));
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 2, true);  // 200.00
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 3, true);  // 150.00
 
-        // 验证方法签名
-        $reflection = new \ReflectionMethod($service, 'calculateProductTotal');
-        $this->assertTrue($reflection->isPublic());
+        $total = $this->service->calculateProductTotal([$cartItem1, $cartItem2]);
+
+        $this->assertEquals('350.00', $total);
+    }
+
+    public function testCalculateProductTotalOnlyCountsSelectedItems(): void
+    {
+        $sku1 = $this->createTestSkuWithStock('100.00');
+        $sku2 = $this->createTestSkuWithStock('50.00');
+
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 2, true);  // 200.00 (选中)
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 3, false); // 150.00 (未选中)
+
+        $total = $this->service->calculateProductTotal([$cartItem1, $cartItem2]);
+
+        $this->assertEquals('200.00', $total);
+    }
+
+    public function testCalculateProductTotalSkipsItemsWithoutPrice(): void
+    {
+        $skuWithPrice = $this->createTestSkuWithStock('100.00');
+        $skuNoPrice = $this->createTestSkuWithoutPrice();
+
+        $cartItem1 = $this->createCartItem($this->testUser, $skuWithPrice, 2, true);
+        $cartItem2 = $this->createCartItem($this->testUser, $skuNoPrice, 3, true);
+
+        $total = $this->service->calculateProductTotal([$cartItem1, $cartItem2]);
+
+        // 只有有价格的商品被计入
+        $this->assertEquals('200.00', $total);
     }
 
     public function testCalculatePromotionDiscount(): void
     {
-        $service = self::getService(PriceCalculationService::class);
+        // 测试满500减50
+        $sku = $this->createTestSkuWithStock('250.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 3, true); // 750.00
 
-        // 测试方法存在且可被调用
-        $this->assertTrue(method_exists($service, 'calculatePromotionDiscount'));
+        $result = $this->service->calculatePromotionDiscount($this->testUser, [$cartItem]);
 
-        // 验证方法签名
-        $reflection = new \ReflectionMethod($service, 'calculatePromotionDiscount');
-        $this->assertTrue($reflection->isPublic());
+        $this->assertIsArray($result);
+        $this->assertArrayHasKey('discountAmount', $result);
+        $this->assertArrayHasKey('discountDetails', $result);
+
+        // 750 >= 500，应该有满500减50
+        $this->assertEquals('50.00', $result['discountAmount']);
+        $this->assertNotEmpty($result['discountDetails']);
+    }
+
+    public function testCalculatePromotionDiscountFor200Threshold(): void
+    {
+        // 测试满200减20
+        $sku = $this->createTestSkuWithStock('100.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 3, true); // 300.00
+
+        $result = $this->service->calculatePromotionDiscount($this->testUser, [$cartItem]);
+
+        $this->assertIsArray($result);
+        // 300 >= 200 但 < 500，应该有满200减20
+        $this->assertEquals('20.00', $result['discountAmount']);
+    }
+
+    public function testCalculatePromotionDiscountNoDiscount(): void
+    {
+        // 测试不满足任何阈值
+        $sku = $this->createTestSkuWithStock('50.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2, true); // 100.00
+
+        $result = $this->service->calculatePromotionDiscount($this->testUser, [$cartItem]);
+
+        $this->assertIsArray($result);
+        // 100 < 200，没有满减优惠
+        $this->assertEquals('0.00', $result['discountAmount']);
+    }
+
+    public function testCalculatePromotionDiscountFreeShipping(): void
+    {
+        // 测试满99免邮
+        $sku = $this->createTestSkuWithStock('50.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2, true); // 100.00
+
+        $result = $this->service->calculatePromotionDiscount($this->testUser, [$cartItem]);
+
+        $this->assertIsArray($result);
+        // 100 >= 99，应该有免邮优惠
+        $discountDetails = $result['discountDetails'];
+        $hasFreeShipping = false;
+        foreach ($discountDetails as $detail) {
+            if ($detail->type === 'free-freight') {
+                $hasFreeShipping = true;
+                break;
+            }
+        }
+        $this->assertTrue($hasFreeShipping);
     }
 
     public function testCalculateShippingFee(): void
     {
-        $service = self::getService(PriceCalculationService::class);
+        $sku = $this->createTestSkuWithStock('100.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1, true);
 
-        // 测试方法存在且可被调用
-        $this->assertTrue(method_exists($service, 'calculateShippingFee'));
+        $fee = $this->service->calculateShippingFee($this->testUser, [$cartItem]);
 
-        // 验证方法签名
-        $reflection = new \ReflectionMethod($service, 'calculateShippingFee');
-        $this->assertTrue($reflection->isPublic());
+        // 默认运费为 10.00
+        $this->assertEquals('10.00', $fee);
+    }
+
+    public function testCalculateShippingFeeWithEmptyCart(): void
+    {
+        $fee = $this->service->calculateShippingFee($this->testUser, []);
+
+        $this->assertEquals('0.00', $fee);
     }
 
     public function testCheckPriceChanges(): void
     {
-        $service = self::getService(PriceCalculationService::class);
+        $sku = $this->createTestSkuWithStock('100.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1, true);
 
-        // 测试方法存在且可被调用
-        $this->assertTrue(method_exists($service, 'checkPriceChanges'));
+        $changes = $this->service->checkPriceChanges([$cartItem]);
 
-        // 验证方法签名
-        $reflection = new \ReflectionMethod($service, 'checkPriceChanges');
-        $this->assertTrue($reflection->isPublic());
+        // 由于实现中 oldPrice 和 marketPrice 相同，应该没有变化
+        $this->assertIsArray($changes);
+        $this->assertEmpty($changes);
+    }
+
+    public function testCalculateCartTotalWithFreeShipping(): void
+    {
+        // 测试当满足免邮条件时，运费应该为0
+        $sku = $this->createTestSkuWithStock('50.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2, true); // 100.00，满足99免邮
+
+        $result = $this->service->calculateCartTotal($this->testUser, [$cartItem]);
+
+        $this->assertInstanceOf(CartTotalResponse::class, $result);
+        $this->assertTrue($result->success);
+        // 满足免邮条件，运费应该为0
+        $this->assertEquals('0.00', $result->shippingFee);
+    }
+
+    public function testCalculateCartTotalReturnsDiscountDetails(): void
+    {
+        $sku = $this->createTestSkuWithStock('250.00');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 3, true); // 750.00
+
+        $result = $this->service->calculateCartTotal($this->testUser, [$cartItem]);
+
+        $this->assertInstanceOf(CartTotalResponse::class, $result);
+        $this->assertTrue($result->success);
+
+        $discountDetails = $result->discountDetails;
+        $this->assertIsArray($discountDetails);
+        $this->assertNotEmpty($discountDetails);
     }
 }

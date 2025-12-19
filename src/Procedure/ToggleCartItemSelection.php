@@ -13,10 +13,12 @@ use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\Validator\Constraints as Assert;
 use Tourze\JsonRPC\Core\Attribute\MethodDoc;
 use Tourze\JsonRPC\Core\Attribute\MethodExpose;
-use Tourze\JsonRPC\Core\Attribute\MethodParam;
 use Tourze\JsonRPC\Core\Attribute\MethodTag;
+use Tourze\JsonRPC\Core\Contracts\RpcParamInterface;
+use Tourze\JsonRPC\Core\Result\ArrayResult;
 use Tourze\JsonRPCLockBundle\Procedure\LockableProcedure;
 use Tourze\OrderCartBundle\DTO\CartOperationResponse;
+use Tourze\OrderCartBundle\Param\ToggleCartItemSelectionParam;
 use Tourze\OrderCartBundle\Exception\CartValidationException;
 use Tourze\OrderCartBundle\Interface\CartManagerInterface;
 
@@ -27,15 +29,6 @@ use Tourze\OrderCartBundle\Interface\CartManagerInterface;
 #[WithMonologChannel(channel: 'order_cart')]
 final class ToggleCartItemSelection extends LockableProcedure
 {
-    /**
-     * @var array<string>|string
-     */
-    #[MethodParam(description: '购物车商品ID，单个或多个')]
-    public string|array $cartItemIds = '';
-
-    #[MethodParam(description: '是否选中')]
-    public bool $selected = true;
-
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly CartManagerInterface $cartManager,
@@ -45,20 +38,20 @@ final class ToggleCartItemSelection extends LockableProcedure
     }
 
     /**
-     * @return array<string, mixed>
+     * @phpstan-param ToggleCartItemSelectionParam $param
      */
-    public function execute(): array
+    public function execute(ToggleCartItemSelectionParam|RpcParamInterface $param): ArrayResult
     {
         try {
-            $this->validateInput();
+            $this->validateInput($param);
             $user = $this->getCurrentUser();
 
-            $cartItemIds = is_array($this->cartItemIds) ? $this->cartItemIds : [$this->cartItemIds];
+            $cartItemIds = is_array($param->cartItemIds) ? $param->cartItemIds : [$param->cartItemIds];
 
             $this->procedureLogger->info('切换购物车商品选中状态', [
                 'user_id' => $user->getUserIdentifier(),
                 'item_count' => count($cartItemIds),
-                'selected' => $this->selected,
+                'selected' => $param->selected,
             ]);
 
             $this->entityManager->beginTransaction();
@@ -66,9 +59,9 @@ final class ToggleCartItemSelection extends LockableProcedure
             try {
                 $affectedCount = count($cartItemIds);
                 if (1 === $affectedCount) {
-                    $this->cartManager->updateSelection($user, $cartItemIds[0], $this->selected);
+                    $this->cartManager->updateSelection($user, $cartItemIds[0], $param->selected);
                 } else {
-                    $this->cartManager->batchUpdateSelection($user, $cartItemIds, $this->selected);
+                    $this->cartManager->batchUpdateSelection($user, $cartItemIds, $param->selected);
                 }
 
                 $totalItems = $this->cartManager->getCartItemCount($user);
@@ -80,7 +73,7 @@ final class ToggleCartItemSelection extends LockableProcedure
                     $affectedCount,
                     $totalItems,
                     $totalQuantity,
-                    sprintf('%s了%d个商品', $this->selected ? '选中' : '取消选中', $affectedCount)
+                    sprintf('%s了%d个商品', $param->selected ? '选中' : '取消选中', $affectedCount)
                 );
 
                 $this->procedureLogger->info('切换购物车商品选中状态完成', [
@@ -88,7 +81,7 @@ final class ToggleCartItemSelection extends LockableProcedure
                     'affected_count' => $response->affectedCount,
                 ]);
 
-                return $response->toArray();
+                return new ArrayResult($response->toArray());
             } catch (\Throwable $e) {
                 $this->entityManager->rollback();
                 throw $e;
@@ -101,13 +94,13 @@ final class ToggleCartItemSelection extends LockableProcedure
 
             $errorResponse = CartOperationResponse::failure('操作失败: ' . $e->getMessage());
 
-            return $errorResponse->toArray();
+            return new ArrayResult($errorResponse->toArray());
         }
     }
 
-    private function validateInput(): void
+    private function validateInput(ToggleCartItemSelectionParam $param): void
     {
-        $cartItemIds = is_array($this->cartItemIds) ? $this->cartItemIds : [$this->cartItemIds];
+        $cartItemIds = is_array($param->cartItemIds) ? $param->cartItemIds : [$param->cartItemIds];
 
         if ([] === $cartItemIds) {
             throw CartValidationException::emptyItemIds();
@@ -130,32 +123,5 @@ final class ToggleCartItemSelection extends LockableProcedure
         assert($user instanceof UserInterface);
 
         return $user;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public static function getMockResult(): array
-    {
-        return [
-            'updated' => [
-                [
-                    'id' => '123e4567-e89b-12d3-a456-426614174000',
-                    'skuId' => 1,
-                    'quantity' => 2,
-                    'selected' => true,
-                    'metadata' => ['color' => 'red', 'size' => 'M'],
-                    'createTime' => '2023-01-01T12:00:00+00:00',
-                    'updateTime' => '2023-01-01T12:05:00+00:00',
-                    'sku' => [
-                        'id' => 1,
-                        'name' => '商品名称',
-                        'price' => 99.99,
-                        'stock' => 100,
-                    ],
-                ],
-            ],
-            'message' => '商品已选中',
-        ];
     }
 }

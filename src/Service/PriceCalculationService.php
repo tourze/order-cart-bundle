@@ -9,15 +9,14 @@ use Symfony\Component\Security\Core\User\UserInterface;
 use Tourze\OrderCartBundle\DTO\CartTotalResponse;
 use Tourze\OrderCartBundle\DTO\DiscountDetail;
 use Tourze\OrderCartBundle\Entity\CartItem;
-use Tourze\ProductCoreBundle\Service\PriceService;
 
 #[AsAlias(id: PriceCalculationServiceInterface::class)]
 #[WithMonologChannel(channel: 'order_cart')]
-final class PriceCalculationService implements PriceCalculationServiceInterface
+final readonly class PriceCalculationService implements PriceCalculationServiceInterface
 {
     public function __construct(
-        private readonly LoggerInterface $logger,
-        private readonly PriceService $priceService,
+        private LoggerInterface $logger,
+        private FreightPriceProviderInterface $freightPriceProvider,
     ) {
     }
 
@@ -191,13 +190,13 @@ final class PriceCalculationService implements PriceCalculationServiceInterface
             }
 
             // 调用运费计算服务
-            $freightPrice = $this->priceService->findFreightPriceBySkus($freightId, $skus);
+            $freightPrice = $this->freightPriceProvider->findFreightPriceBySkus($freightId, $skus);
 
             if (null === $freightPrice) {
                 return '10.00'; // 默认运费
             }
 
-            return number_format((float) $freightPrice->getPrice(), 2, '.', '');
+            return number_format((float) $freightPrice, 2, '.', '');
         } catch (\Throwable $e) {
             $this->logger->error('运费计算失败', [
                 'user_id' => $user->getUserIdentifier(),

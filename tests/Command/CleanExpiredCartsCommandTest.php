@@ -79,7 +79,7 @@ final class CleanExpiredCartsCommandTest extends AbstractCommandTestCase
         $this->assertInstanceOf(CleanExpiredCartsCommand::class, $command);
 
         $application = new Application();
-        $application->add($command);
+        $application->addCommand($command);
 
         $command = $application->find('order-cart:clean-expired');
         $this->commandTester = new CommandTester($command);

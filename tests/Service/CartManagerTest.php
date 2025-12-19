@@ -6,24 +6,22 @@ namespace Tourze\OrderCartBundle\Tests\Service;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
-use PHPUnit\Framework\MockObject\MockObject;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
-use Tourze\LockServiceBundle\Service\LockService;
 use Tourze\OrderCartBundle\Entity\CartItem;
+use Tourze\OrderCartBundle\Exception\CartItemNotFoundException;
 use Tourze\OrderCartBundle\Exception\CartLimitExceededException;
 use Tourze\OrderCartBundle\Exception\InvalidQuantityException;
 use Tourze\OrderCartBundle\Exception\InvalidSkuException;
 use Tourze\OrderCartBundle\Repository\CartItemRepository;
-use Tourze\OrderCartBundle\Service\CartAddLogService;
 use Tourze\OrderCartBundle\Service\CartManager;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
 use Tourze\ProductCoreBundle\Entity\Sku;
-use Tourze\ProductServiceContracts\SkuLoaderInterface;
-use Tourze\StockManageBundle\Model\StockSummary;
-use Tourze\StockManageBundle\Service\StockServiceInterface;
+use Tourze\ProductCoreBundle\Entity\Spu;
+use Tourze\StockManageBundle\Entity\StockBatch;
 
 /**
+ * CartManager 集成测试
+ *
  * @internal
  */
 #[CoversClass(CartManager::class)]
@@ -31,271 +29,352 @@ use Tourze\StockManageBundle\Service\StockServiceInterface;
 final class CartManagerTest extends AbstractIntegrationTestCase
 {
     private CartManager $cartManager;
-
-    private MockObject $repository;
-
-    private MockObject $skuLoader;
-
-    private MockObject $stockService;
-
-    private MockObject $eventDispatcher;
-
-    private MockObject $lockService;
-
-    private MockObject $cartAddLogService;
+    private CartItemRepository $repository;
+    private UserInterface $testUser;
+    private Sku $testSku;
 
     protected function onSetUp(): void
     {
-        $this->repository = $this->createMock(CartItemRepository::class);
-        $this->skuLoader = $this->createMock(SkuLoaderInterface::class);
-        $this->stockService = $this->createMock(StockServiceInterface::class);
-        $this->eventDispatcher = $this->createMock(EventDispatcherInterface::class);
-        $this->lockService = $this->createMock(LockService::class);
-        $this->cartAddLogService = $this->createMock(CartAddLogService::class);
+        $this->cartManager = self::getService(CartManager::class);
+        $this->repository = self::getService(CartItemRepository::class);
+        $this->testUser = $this->createUser('cartmanager_test_user', 'test_password', ['ROLE_USER']);
+        $this->testSku = $this->createTestSkuWithStock();
+    }
 
-        // @phpstan-ignore-next-line integrationTest.noDirectInstantiationOfCoveredClass - 需要使用Mock依赖验证行为
-        $this->cartManager = new CartManager(
-            $this->repository,
-            $this->skuLoader,
-            $this->stockService,
-            $this->eventDispatcher,
-            $this->lockService,
-            $this->cartAddLogService
-        );
+    private function createTestSkuWithStock(): Sku
+    {
+        $em = self::getEntityManager();
+
+        // 创建 SPU
+        $spu = new Spu();
+        $spu->setTitle('Test Product for CartManager ' . uniqid());
+        $em->persist($spu);
+
+        // 创建 SKU
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        $sku->setMarketPrice('99.99');
+        $em->persist($sku);
+
+        $em->flush();
+
+        // 创建库存批次记录
+        $stockBatch = new StockBatch();
+        $stockBatch->setSku($sku);
+        $stockBatch->setBatchNo('BATCH-' . uniqid());
+        $stockBatch->setQuantity(1000);
+        $stockBatch->setAvailableQuantity(1000);
+        $stockBatch->setStatus('available');
+        $em->persist($stockBatch);
+        $em->flush();
+
+        return $sku;
+    }
+
+    private function createAnotherTestSkuWithStock(): Sku
+    {
+        $em = self::getEntityManager();
+
+        $spu = new Spu();
+        $spu->setTitle('Another Test Product ' . uniqid());
+        $em->persist($spu);
+
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        $sku->setMarketPrice('199.99');
+        $em->persist($sku);
+
+        $em->flush();
+
+        $stockBatch = new StockBatch();
+        $stockBatch->setSku($sku);
+        $stockBatch->setBatchNo('BATCH-' . uniqid());
+        $stockBatch->setQuantity(500);
+        $stockBatch->setAvailableQuantity(500);
+        $stockBatch->setStatus('available');
+        $em->persist($stockBatch);
+        $em->flush();
+
+        return $sku;
     }
 
     public function testAddItemSuccess(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $sku = $this->createMock(Sku::class);
-        $sku->method('getId')->willReturn('1');
-
-        $this->skuLoader->expects($this->once())
-            ->method('loadSkuByIdentifier')
-            ->with($sku->getId())
-            ->willReturn($sku)
-        ;
-
-        $stockSummary = $this->createMock(StockSummary::class);
-        $stockSummary->method('getAvailableQuantity')->willReturn(100);
-
-        $this->stockService->expects($this->once())
-            ->method('getAvailableStock')
-            ->with($sku)
-            ->willReturn($stockSummary)
-        ;
-
-        $this->repository->expects($this->once())
-            ->method('countByUser')
-            ->with($user)
-            ->willReturn(5)
-        ;
-
-        $this->repository->expects($this->once())
-            ->method('findByUserAndSku')
-            ->with($user, $sku)
-            ->willReturn(null)
-        ;
-
-        $cartItem = new CartItem();
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->willReturnCallback(function (CartItem $item) use ($cartItem): CartItem {
-                $item->setId('1');
-
-                return $cartItem;
-            })
-        ;
-
-        $result = $this->cartManager->addItem($user, $sku, 2, ['note' => 'test']);
+        $result = $this->cartManager->addItem($this->testUser, $this->testSku, 2, ['note' => 'test']);
 
         $this->assertInstanceOf(CartItem::class, $result);
+        $this->assertEquals(2, $result->getQuantity());
+        $this->assertEquals($this->testSku->getId(), $result->getSku()->getId());
+        $this->assertTrue($result->isSelected());
+        $this->assertArrayHasKey('note', $result->getMetadata());
+
+        // 验证数据已持久化
+        $found = $this->repository->findByUserAndSku($this->testUser, $this->testSku);
+        $this->assertNotNull($found);
+        $this->assertEquals(2, $found->getQuantity());
+    }
+
+    public function testAddItemToExistingCartItemIncreasesQuantity(): void
+    {
+        // 第一次添加
+        $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+
+        // 第二次添加同一SKU
+        $result = $this->cartManager->addItem($this->testUser, $this->testSku, 3);
+
+        $this->assertEquals(5, $result->getQuantity());
+
+        // 确认购物车中只有一个条目
+        $count = $this->repository->countByUser($this->testUser);
+        $this->assertEquals(1, $count);
+    }
+
+    public function testAddItemInvalidQuantityZero(): void
+    {
+        $this->expectException(InvalidQuantityException::class);
+        $this->expectExceptionMessage('新增数量必须大于0');
+
+        $this->cartManager->addItem($this->testUser, $this->testSku, 0);
+    }
+
+    public function testAddItemInvalidQuantityNegative(): void
+    {
+        $this->expectException(InvalidQuantityException::class);
+        $this->expectExceptionMessage('新增数量必须大于0');
+
+        $this->cartManager->addItem($this->testUser, $this->testSku, -1);
+    }
+
+    public function testAddItemExceedMaxQuantityPerItem(): void
+    {
+        $this->expectException(InvalidQuantityException::class);
+        $this->expectExceptionMessage('超出最大购买数量');
+
+        $this->cartManager->addItem($this->testUser, $this->testSku, 1000);
     }
 
     public function testAddItemInvalidSku(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $sku = $this->createMock(Sku::class);
+        // 创建一个未持久化的SKU（模拟无效SKU）
+        $invalidSpu = new Spu();
+        $invalidSpu->setTitle('Invalid Product');
 
-        $this->skuLoader->expects($this->once())
-            ->method('loadSkuByIdentifier')
-            ->with($sku->getId())
-            ->willReturn(null)
-        ;
+        $invalidSku = new Sku();
+        $invalidSku->setSpu($invalidSpu);
+        $invalidSku->setUnit('个');
 
         $this->expectException(InvalidSkuException::class);
-        $this->cartManager->addItem($user, $sku, 1);
-    }
 
-    public function testAddItemInvalidQuantity(): void
-    {
-        $user = $this->createMock(UserInterface::class);
-        $sku = $this->createMock(Sku::class);
-
-        $this->expectException(InvalidQuantityException::class);
-        $this->cartManager->addItem($user, $sku, 0);
-    }
-
-    public function testAddItemExceedLimit(): void
-    {
-        $user = $this->createMock(UserInterface::class);
-        $sku = $this->createMock(Sku::class);
-        $sku->method('getId')->willReturn('test-sku-123');
-
-        $this->skuLoader->expects($this->once())
-            ->method('loadSkuByIdentifier')
-            ->with('test-sku-123')
-            ->willReturn($sku)
-        ;
-
-        $stockSummary = $this->createMock(StockSummary::class);
-        $stockSummary->method('getAvailableQuantity')->willReturn(100);
-
-        $this->stockService->expects($this->once())
-            ->method('getAvailableStock')
-            ->willReturn($stockSummary)
-        ;
-
-        $this->repository->expects($this->once())
-            ->method('countByUser')
-            ->willReturn(100)
-        ;
-
-        $this->expectException(CartLimitExceededException::class);
-        $this->cartManager->addItem($user, $sku, 1);
+        $this->cartManager->addItem($this->testUser, $invalidSku, 1);
     }
 
     public function testUpdateQuantitySuccess(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $cartItem = new CartItem();
-        $cartItem->setId('1');
-        $cartItem->setQuantity(2);
+        // 先添加购物车项
+        $cartItem = $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
 
-        $sku = $this->createMock(Sku::class);
-        $cartItem->setSku($sku);
-
-        $this->repository->expects($this->once())
-            ->method('findByUserAndId')
-            ->with($user, '1')
-            ->willReturn($cartItem)
-        ;
-
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->with($cartItem)
-        ;
-
-        $this->lockService->expects($this->once())
-            ->method('blockingRun')
-            ->willReturnCallback(function ($key, callable $callback) {
-                return $callback();
-            })
-        ;
-
-        $result = $this->cartManager->updateQuantity($user, '1', 5);
+        // 更新数量
+        $result = $this->cartManager->updateQuantity($this->testUser, $cartItemId, 5);
 
         $this->assertEquals(5, $result->getQuantity());
+
+        // 验证持久化
+        $found = $this->repository->findByUserAndId($this->testUser, $cartItemId);
+        $this->assertNotNull($found);
+        $this->assertEquals(5, $found->getQuantity());
+    }
+
+    public function testUpdateQuantityInvalidQuantityZero(): void
+    {
+        $cartItem = $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
+
+        $this->expectException(InvalidQuantityException::class);
+
+        $this->cartManager->updateQuantity($this->testUser, $cartItemId, 0);
+    }
+
+    public function testUpdateQuantityCartItemNotFound(): void
+    {
+        $this->expectException(CartItemNotFoundException::class);
+
+        $this->cartManager->updateQuantity($this->testUser, 'nonexistent-id', 5);
     }
 
     public function testRemoveItemSuccess(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $cartItem = new CartItem();
-        $cartItem->setId('1');
+        $cartItem = $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
 
-        $sku = $this->createMock(Sku::class);
-        $sku->method('getId')->willReturn('10');
-        $cartItem->setSku($sku);
+        $this->cartManager->removeItem($this->testUser, $cartItemId);
 
-        $this->repository->expects($this->once())
-            ->method('findByUserAndId')
-            ->with($user, '1')
-            ->willReturn($cartItem)
-        ;
+        // 验证已删除
+        $found = $this->repository->findByUserAndId($this->testUser, $cartItemId);
+        $this->assertNull($found);
+    }
 
-        $this->repository->expects($this->once())
-            ->method('remove')
-            ->with($cartItem)
-        ;
+    public function testRemoveItemNotFound(): void
+    {
+        $this->expectException(CartItemNotFoundException::class);
 
-        $this->cartManager->removeItem($user, '1');
+        $this->cartManager->removeItem($this->testUser, 'nonexistent-id');
     }
 
     public function testClearCartSuccess(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $cartItems = [
-            new CartItem(),
-            new CartItem(),
-            new CartItem(),
-        ];
+        // 添加多个购物车项
+        $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+        $anotherSku = $this->createAnotherTestSkuWithStock();
+        $this->cartManager->addItem($this->testUser, $anotherSku, 3);
 
-        $this->repository->expects($this->once())
-            ->method('findByUser')
-            ->with($user)
-            ->willReturn($cartItems)
-        ;
+        // 验证有2个项目
+        $this->assertEquals(2, $this->repository->countByUser($this->testUser));
 
-        $this->repository->expects($this->exactly(3))
-            ->method('remove')
-        ;
+        // 清空购物车
+        $count = $this->cartManager->clearCart($this->testUser);
 
-        $count = $this->cartManager->clearCart($user);
+        $this->assertEquals(2, $count);
+        $this->assertEquals(0, $this->repository->countByUser($this->testUser));
+    }
 
-        $this->assertEquals(3, $count);
+    public function testClearEmptyCart(): void
+    {
+        $count = $this->cartManager->clearCart($this->testUser);
+
+        $this->assertEquals(0, $count);
     }
 
     public function testUpdateSelectionSuccess(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $cartItem = new CartItem();
-        $cartItem->setId('1');
-        $cartItem->setSelected(false);
+        $cartItem = $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
 
-        $this->repository->expects($this->once())
-            ->method('findByUserAndId')
-            ->with($user, '1')
-            ->willReturn($cartItem)
-        ;
+        // 默认是选中的，取消选中
+        $result = $this->cartManager->updateSelection($this->testUser, $cartItemId, false);
 
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->with($cartItem)
-        ;
+        $this->assertFalse($result->isSelected());
 
-        $result = $this->cartManager->updateSelection($user, '1', true);
+        // 验证持久化
+        $found = $this->repository->findByUserAndId($this->testUser, $cartItemId);
+        $this->assertNotNull($found);
+        $this->assertFalse($found->isSelected());
+    }
 
-        $this->assertTrue($result->isSelected());
+    public function testUpdateSelectionNotFound(): void
+    {
+        $this->expectException(CartItemNotFoundException::class);
+
+        $this->cartManager->updateSelection($this->testUser, 'nonexistent-id', true);
     }
 
     public function testBatchUpdateSelectionSuccess(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        $cartItem1 = $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+        $anotherSku = $this->createAnotherTestSkuWithStock();
+        $cartItem2 = $this->cartManager->addItem($this->testUser, $anotherSku, 3);
 
-        $cartItem1 = new CartItem();
-        $cartItem1->setId('1');
-        $cartItem1->setSelected(false);
+        $cartItemId1 = $cartItem1->getId();
+        $cartItemId2 = $cartItem2->getId();
+        $this->assertNotNull($cartItemId1);
+        $this->assertNotNull($cartItemId2);
 
-        $cartItem2 = new CartItem();
-        $cartItem2->setId('2');
-        $cartItem2->setSelected(false);
-
-        $this->repository->expects($this->once())
-            ->method('findByUserAndIds')
-            ->with($user, ['1', '2'])
-            ->willReturn([$cartItem1, $cartItem2])
-        ;
-
-        $this->repository->expects($this->exactly(2))
-            ->method('save')
-        ;
-
-        $results = $this->cartManager->batchUpdateSelection($user, ['1', '2'], true);
+        // 批量取消选中
+        $results = $this->cartManager->batchUpdateSelection($this->testUser, [$cartItemId1, $cartItemId2], false);
 
         $this->assertCount(2, $results);
-        $resultArray = array_values($results);
-        $this->assertTrue($resultArray[0]->isSelected());
-        $this->assertTrue($resultArray[1]->isSelected());
+
+        foreach ($results as $item) {
+            $this->assertFalse($item->isSelected());
+        }
+
+        // 验证持久化
+        $found1 = $this->repository->findByUserAndId($this->testUser, $cartItemId1);
+        $found2 = $this->repository->findByUserAndId($this->testUser, $cartItemId2);
+        $this->assertNotNull($found1);
+        $this->assertNotNull($found2);
+        $this->assertFalse($found1->isSelected());
+        $this->assertFalse($found2->isSelected());
+    }
+
+    public function testBatchUpdateSelectionEmptyArray(): void
+    {
+        $results = $this->cartManager->batchUpdateSelection($this->testUser, [], true);
+
+        $this->assertEmpty($results);
+    }
+
+    public function testGetCartItemCount(): void
+    {
+        $this->assertEquals(0, $this->cartManager->getCartItemCount($this->testUser));
+
+        $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+
+        $this->assertEquals(1, $this->cartManager->getCartItemCount($this->testUser));
+
+        $anotherSku = $this->createAnotherTestSkuWithStock();
+        $this->cartManager->addItem($this->testUser, $anotherSku, 3);
+
+        $this->assertEquals(2, $this->cartManager->getCartItemCount($this->testUser));
+    }
+
+    public function testGetCartTotalQuantity(): void
+    {
+        $this->assertEquals(0, $this->cartManager->getCartTotalQuantity($this->testUser));
+
+        $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+
+        $this->assertEquals(2, $this->cartManager->getCartTotalQuantity($this->testUser));
+
+        $anotherSku = $this->createAnotherTestSkuWithStock();
+        $this->cartManager->addItem($this->testUser, $anotherSku, 3);
+
+        $this->assertEquals(5, $this->cartManager->getCartTotalQuantity($this->testUser));
+    }
+
+    public function testUserIsolation(): void
+    {
+        // 用户1添加购物车
+        $this->cartManager->addItem($this->testUser, $this->testSku, 2);
+
+        // 创建另一个用户
+        $otherUser = $this->createUser('other_cartmanager_user', 'password', ['ROLE_USER']);
+
+        // 用户2的购物车应该为空
+        $this->assertEquals(0, $this->cartManager->getCartItemCount($otherUser));
+        $this->assertEquals(0, $this->cartManager->getCartTotalQuantity($otherUser));
+
+        // 用户2添加购物车
+        $anotherSku = $this->createAnotherTestSkuWithStock();
+        $this->cartManager->addItem($otherUser, $anotherSku, 5);
+
+        // 验证两个用户的购物车互不影响
+        $this->assertEquals(1, $this->cartManager->getCartItemCount($this->testUser));
+        $this->assertEquals(2, $this->cartManager->getCartTotalQuantity($this->testUser));
+        $this->assertEquals(1, $this->cartManager->getCartItemCount($otherUser));
+        $this->assertEquals(5, $this->cartManager->getCartTotalQuantity($otherUser));
+    }
+
+    public function testCartLimitExceeded(): void
+    {
+        // 先填满购物车到限制数量（100个）
+        for ($i = 0; $i < 100; ++$i) {
+            $sku = $this->createAnotherTestSkuWithStock();
+            $this->cartManager->addItem($this->testUser, $sku, 1);
+        }
+
+        $this->assertEquals(100, $this->cartManager->getCartItemCount($this->testUser));
+
+        // 尝试添加第101个应该失败
+        $this->expectException(CartLimitExceededException::class);
+
+        $extraSku = $this->createAnotherTestSkuWithStock();
+        $this->cartManager->addItem($this->testUser, $extraSku, 1);
     }
 }

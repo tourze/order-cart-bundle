@@ -11,8 +11,11 @@ use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\OrderCartBundle\Service\CartCacheService;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
 use Tourze\ProductCoreBundle\Entity\Sku;
+use Tourze\ProductCoreBundle\Entity\Spu;
 
 /**
+ * CartCacheService 集成测试
+ *
  * @internal
  */
 #[CoversClass(CartCacheService::class)]
@@ -20,29 +23,58 @@ use Tourze\ProductCoreBundle\Entity\Sku;
 final class CartCacheServiceTest extends AbstractIntegrationTestCase
 {
     private CartCacheService $service;
-
-    private UserInterface $user;
+    private UserInterface $testUser;
 
     protected function onSetUp(): void
     {
-        $this->user = $this->createMock(UserInterface::class);
-        $this->user->method('getUserIdentifier')->willReturn('testuser@example.com');
-
-        // Get service from container for integration test
         $this->service = self::getService(CartCacheService::class);
+        $this->testUser = $this->createUser('cart_cache_test_user', 'test_password', ['ROLE_USER']);
+    }
+
+    private function createTestSku(): Sku
+    {
+        $em = self::getEntityManager();
+
+        $spu = new Spu();
+        $spu->setTitle('Test Product ' . uniqid());
+        $em->persist($spu);
+
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        $sku->setMarketPrice('99.99');
+        $em->persist($sku);
+
+        $em->flush();
+
+        return $sku;
+    }
+
+    private function createCartItem(UserInterface $user, Sku $sku, int $quantity = 1): CartItem
+    {
+        $em = self::getEntityManager();
+
+        $cartItem = new CartItem();
+        $cartItem->setUser($user);
+        $cartItem->setSku($sku);
+        $cartItem->setQuantity($quantity);
+        $cartItem->setSelected(true);
+        $em->persist($cartItem);
+        $em->flush();
+
+        return $cartItem;
     }
 
     public function testClearUserCartCacheShouldExecuteWithoutError(): void
     {
-        // This is an integration test - we just verify it executes without throwing
+        // 集成测试 - 验证方法可以正常执行而不抛出异常
         $this->expectNotToPerformAssertions();
-        $this->service->clearUserCartCache($this->user);
+        $this->service->clearUserCartCache($this->testUser);
     }
 
     public function testClearSkuRelatedCacheShouldExecuteWithoutError(): void
     {
-        $sku = $this->createMock(Sku::class);
-        $sku->method('getId')->willReturn('sku123');
+        $sku = $this->createTestSku();
 
         $this->expectNotToPerformAssertions();
         $this->service->clearSkuRelatedCache($sku);
@@ -50,25 +82,63 @@ final class CartCacheServiceTest extends AbstractIntegrationTestCase
 
     public function testClearSpecificCartCacheShouldExecuteWithoutError(): void
     {
-        $cartItem = new CartItem();
-        $cartItem->setId('item123');
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2);
 
         $this->expectNotToPerformAssertions();
-        $this->service->clearSpecificCartCache($this->user, [$cartItem]);
+        $this->service->clearSpecificCartCache($this->testUser, [$cartItem]);
+    }
+
+    public function testClearSpecificCartCacheWithFreightId(): void
+    {
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2);
+
+        $this->expectNotToPerformAssertions();
+        $this->service->clearSpecificCartCache($this->testUser, [$cartItem], 'freight_123');
     }
 
     public function testGenerateCacheTags(): void
     {
-        $sku = $this->createMock(Sku::class);
-        $sku->method('getId')->willReturn('sku123');
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 2);
 
-        $cartItem = $this->createMock(CartItem::class);
-        $cartItem->method('getSku')->willReturn($sku);
+        $tags = $this->service->generateCacheTags($this->testUser, [$cartItem]);
 
-        $tags = $this->service->generateCacheTags($this->user, [$cartItem]);
+        $this->assertIsArray($tags);
+        $this->assertContains('user_cart_' . $this->testUser->getUserIdentifier(), $tags);
+        $this->assertContains('sku_' . $sku->getId(), $tags);
+    }
 
-        $this->assertContains('user_cart_testuser@example.com', $tags);
-        $this->assertContains('sku_sku123', $tags);
+    public function testGenerateCacheTagsWithMultipleItems(): void
+    {
+        $sku1 = $this->createTestSku();
+        $sku2 = $this->createTestSku();
+
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 1);
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 2);
+
+        $tags = $this->service->generateCacheTags($this->testUser, [$cartItem1, $cartItem2]);
+
+        $this->assertIsArray($tags);
+        $this->assertContains('user_cart_' . $this->testUser->getUserIdentifier(), $tags);
+        $this->assertContains('sku_' . $sku1->getId(), $tags);
+        $this->assertContains('sku_' . $sku2->getId(), $tags);
+        // 验证没有重复的标签
+        $this->assertEquals(count($tags), count(array_unique($tags)));
+    }
+
+    public function testGenerateCacheTagsDeduplication(): void
+    {
+        $sku = $this->createTestSku();
+
+        // 创建一个购物车项，然后传入两次（模拟同一个 SKU 出现两次的场景）
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
+
+        $tags = $this->service->generateCacheTags($this->testUser, [$cartItem, $cartItem]);
+
+        // 应该只有一个用户标签和一个 SKU 标签（去重后）
+        $this->assertCount(2, $tags);
     }
 
     public function testClearAllCartCacheShouldExecuteWithoutError(): void
@@ -81,10 +151,37 @@ final class CartCacheServiceTest extends AbstractIntegrationTestCase
     {
         $stats = $this->service->getCacheStats();
 
+        $this->assertIsArray($stats);
         $this->assertArrayHasKey('cache_type', $stats);
         $this->assertArrayHasKey('supports_tags', $stats);
         $this->assertArrayHasKey('supports_delete', $stats);
         $this->assertIsBool($stats['supports_tags']);
         $this->assertIsBool($stats['supports_delete']);
+    }
+
+    public function testClearUserCartCacheForDifferentUsers(): void
+    {
+        $otherUser = $this->createUser('other_cache_user', 'password', ['ROLE_USER']);
+
+        // 验证可以为不同用户清除缓存而不互相影响
+        $this->expectNotToPerformAssertions();
+        $this->service->clearUserCartCache($this->testUser);
+        $this->service->clearUserCartCache($otherUser);
+    }
+
+    public function testClearSpecificCartCacheWithEmptyCartItems(): void
+    {
+        // 验证空购物车项数组不会导致异常
+        $this->expectNotToPerformAssertions();
+        $this->service->clearSpecificCartCache($this->testUser, []);
+    }
+
+    public function testGenerateCacheTagsWithEmptyCartItems(): void
+    {
+        $tags = $this->service->generateCacheTags($this->testUser, []);
+
+        $this->assertIsArray($tags);
+        // 至少应该包含用户标签
+        $this->assertContains('user_cart_' . $this->testUser->getUserIdentifier(), $tags);
     }
 }

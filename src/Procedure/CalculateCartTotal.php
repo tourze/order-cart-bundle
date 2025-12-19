@@ -9,10 +9,12 @@ use Symfony\Component\Security\Core\User\UserInterface;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Tourze\JsonRPC\Core\Attribute\MethodDoc;
 use Tourze\JsonRPC\Core\Attribute\MethodExpose;
-use Tourze\JsonRPC\Core\Attribute\MethodParam;
 use Tourze\JsonRPC\Core\Attribute\MethodTag;
+use Tourze\JsonRPC\Core\Contracts\RpcParamInterface;
+use Tourze\JsonRPC\Core\Result\ArrayResult;
 use Tourze\JsonRPC\Core\Procedure\BaseProcedure;
 use Tourze\OrderCartBundle\DTO\CartTotalResponse;
+use Tourze\OrderCartBundle\Param\CalculateCartTotalParam;
 use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\OrderCartBundle\Repository\CartItemRepository;
 use Tourze\OrderCartBundle\Service\PriceCalculationServiceInterface;
@@ -24,12 +26,6 @@ use Tourze\OrderCartBundle\Service\PriceCalculationServiceInterface;
 #[WithMonologChannel(channel: 'order_cart')]
 final class CalculateCartTotal extends BaseProcedure
 {
-    #[MethodParam(description: '运费模板ID（可选）')]
-    public ?string $freightId = null;
-
-    #[MethodParam(description: '是否只计算已选中商品')]
-    public bool $onlySelected = true;
-
     public function __construct(
         private readonly CartItemRepository $cartItemRepository,
         private readonly PriceCalculationServiceInterface $priceCalculationService,
@@ -39,20 +35,20 @@ final class CalculateCartTotal extends BaseProcedure
     }
 
     /**
-     * @return array<string, mixed>
+     * @phpstan-param CalculateCartTotalParam $param
      */
-    public function execute(): array
+    public function execute(CalculateCartTotalParam|RpcParamInterface $param): ArrayResult
     {
         try {
             $user = $this->getCurrentUser();
 
             $this->procedureLogger->info('开始计算购物车总价', [
                 'user_id' => $user->getUserIdentifier(),
-                'freight_id' => $this->freightId,
-                'only_selected' => $this->onlySelected,
+                'freight_id' => $param->freightId,
+                'only_selected' => $param->onlySelected,
             ]);
             // 获取用户的购物车项目
-            $cartItems = $this->getCartItems($user);
+            $cartItems = $this->getCartItems($user, $param);
 
             if ([] === $cartItems) {
                 $emptyResponse = CartTotalResponse::success('0.00', '0.00', '0.00', '0.00', '0.00');
@@ -61,14 +57,14 @@ final class CalculateCartTotal extends BaseProcedure
                     'user_id' => $user->getUserIdentifier(),
                 ]);
 
-                return $emptyResponse->toArray();
+                return new ArrayResult($emptyResponse->toArray());
             }
 
             // 计算购物车总价
             $response = $this->priceCalculationService->calculateCartTotal(
                 user: $user,
                 cartItems: $cartItems,
-                freightId: $this->freightId
+                freightId: $param->freightId
             );
 
             $this->procedureLogger->info('购物车总价计算完成', [
@@ -80,7 +76,7 @@ final class CalculateCartTotal extends BaseProcedure
                 'has_free_shipping' => $response->hasFreeShipping(),
             ]);
 
-            return $response->toArray();
+            return new ArrayResult($response->toArray());
         } catch (\Throwable $e) {
             $userId = isset($user) ? $user->getUserIdentifier() : 'unknown';
             $this->procedureLogger->error('购物车总价计算失败', [
@@ -91,7 +87,7 @@ final class CalculateCartTotal extends BaseProcedure
 
             $errorResponse = CartTotalResponse::failure('计算失败: ' . $e->getMessage());
 
-            return $errorResponse->toArray();
+            return new ArrayResult($errorResponse->toArray());
         }
     }
 
@@ -106,9 +102,9 @@ final class CalculateCartTotal extends BaseProcedure
     /**
      * @return array<CartItem>
      */
-    private function getCartItems(UserInterface $user): array
+    private function getCartItems(UserInterface $user, CalculateCartTotalParam $param): array
     {
-        if ($this->onlySelected) {
+        if ($param->onlySelected) {
             return $this->cartItemRepository->findSelectedByUser($user);
         }
 

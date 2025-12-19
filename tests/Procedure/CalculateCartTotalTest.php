@@ -6,8 +6,9 @@ namespace Tourze\OrderCartBundle\Tests\Procedure;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
-use Tourze\JsonRPC\Core\Tests\AbstractProcedureTestCase;
+use Tourze\OrderCartBundle\Param\CalculateCartTotalParam;
 use Tourze\OrderCartBundle\Procedure\CalculateCartTotal;
+use Tourze\PHPUnitJsonRPC\AbstractProcedureTestCase;
 
 /**
  * @internal
@@ -27,38 +28,32 @@ final class CalculateCartTotalTest extends AbstractProcedureTestCase
         $this->assertInstanceOf(CalculateCartTotal::class, $procedure);
     }
 
-    public function testProcedureHasOnlySelectedProperty(): void
+    public function testParamObjectHasCorrectProperties(): void
     {
-        $procedure = self::getService(CalculateCartTotal::class);
-        $reflection = new \ReflectionClass($procedure);
-        $this->assertTrue($reflection->hasProperty('onlySelected'));
+        $param = new CalculateCartTotalParam('freight-123', false);
+
+        $this->assertEquals('freight-123', $param->freightId);
+        $this->assertFalse($param->onlySelected);
     }
 
-    public function testProcedureHasFreightIdProperty(): void
+    public function testParamObjectDefaultValues(): void
     {
-        $procedure = self::getService(CalculateCartTotal::class);
-        $reflection = new \ReflectionClass($procedure);
-        $this->assertTrue($reflection->hasProperty('freightId'));
+        $param = new CalculateCartTotalParam();
+
+        $this->assertNull($param->freightId);
+        $this->assertTrue($param->onlySelected);
     }
 
-    public function testExecute(): void
+    public function testExecuteWithParam(): void
     {
         $procedure = self::getService(CalculateCartTotal::class);
+        $param = new CalculateCartTotalParam(null, true);
 
-        // 测试基本功能存在性
-        $this->assertTrue(method_exists($procedure, 'execute'), 'CalculateCartTotal should have execute method');
+        // 由于需要认证用户，这里只测试方法签名正确
+        $this->assertTrue(method_exists($procedure, 'execute'));
 
-        // 测试属性可以被设置
-        $reflection = new \ReflectionClass($procedure);
-
-        $onlySelectedProperty = $reflection->getProperty('onlySelected');
-        $onlySelectedProperty->setAccessible(true);
-        $onlySelectedProperty->setValue($procedure, true);
-        $this->assertTrue($onlySelectedProperty->getValue($procedure));
-
-        $freightIdProperty = $reflection->getProperty('freightId');
-        $freightIdProperty->setAccessible(true);
-        $freightIdProperty->setValue($procedure, 123);
-        $this->assertEquals(123, $freightIdProperty->getValue($procedure));
+        $reflection = new \ReflectionMethod($procedure, 'execute');
+        $parameters = $reflection->getParameters();
+        $this->assertCount(1, $parameters);
     }
 }

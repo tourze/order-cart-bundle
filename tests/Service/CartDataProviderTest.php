@@ -6,8 +6,8 @@ namespace Tourze\OrderCartBundle\Tests\Service;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
-use PHPUnit\Framework\MockObject\MockObject;
 use Symfony\Component\Security\Core\User\UserInterface;
+use Tourze\OrderCartBundle\DTO\CartItemDTO;
 use Tourze\OrderCartBundle\DTO\CartSummaryDTO;
 use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\OrderCartBundle\Exception\CartException;
@@ -15,10 +15,12 @@ use Tourze\OrderCartBundle\Repository\CartItemRepository;
 use Tourze\OrderCartBundle\Service\CartDataProvider;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
 use Tourze\ProductCoreBundle\Entity\Sku;
-use Tourze\StockManageBundle\Model\StockSummary;
-use Tourze\StockManageBundle\Service\StockServiceInterface;
+use Tourze\ProductCoreBundle\Entity\Spu;
+use Tourze\StockManageBundle\Entity\StockBatch;
 
 /**
+ * CartDataProvider 集成测试
+ *
  * @internal
  */
 #[CoversClass(CartDataProvider::class)]
@@ -26,237 +28,297 @@ use Tourze\StockManageBundle\Service\StockServiceInterface;
 final class CartDataProviderTest extends AbstractIntegrationTestCase
 {
     private CartDataProvider $dataProvider;
-
-    private CartItemRepository&MockObject $repository;
-
-    private StockServiceInterface&MockObject $stockService;
+    private CartItemRepository $repository;
+    private UserInterface $testUser;
 
     protected function onSetUp(): void
     {
-        $this->repository = $this->createMock(CartItemRepository::class);
-        $this->stockService = $this->createMock(StockServiceInterface::class);
-
-        // Inject mocked dependencies into container before getting service
-        self::getContainer()->set(CartItemRepository::class, $this->repository);
-        self::getContainer()->set(StockServiceInterface::class, $this->stockService);
-
         $this->dataProvider = self::getService(CartDataProvider::class);
+        $this->repository = self::getService(CartItemRepository::class);
+        $this->testUser = $this->createUser('cart_data_provider_test_user', 'test_password', ['ROLE_USER']);
+    }
+
+    private function createTestSkuWithStock(string $marketPrice = '99.99', int $stockQuantity = 1000): Sku
+    {
+        $em = self::getEntityManager();
+
+        $spu = new Spu();
+        $spu->setTitle('Test Product ' . uniqid());
+        $em->persist($spu);
+
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        $sku->setMarketPrice($marketPrice);
+        $em->persist($sku);
+
+        $em->flush();
+
+        // 创建库存批次记录
+        $stockBatch = new StockBatch();
+        $stockBatch->setSku($sku);
+        $stockBatch->setBatchNo('BATCH-' . uniqid());
+        $stockBatch->setQuantity($stockQuantity);
+        $stockBatch->setAvailableQuantity($stockQuantity);
+        $stockBatch->setStatus('available');
+        $em->persist($stockBatch);
+        $em->flush();
+
+        return $sku;
+    }
+
+    private function createTestSkuWithoutPrice(): Sku
+    {
+        $em = self::getEntityManager();
+
+        $spu = new Spu();
+        $spu->setTitle('Test Product Without Price ' . uniqid());
+        $em->persist($spu);
+
+        $sku = new Sku();
+        $sku->setSpu($spu);
+        $sku->setUnit('个');
+        // 不设置价格
+        $em->persist($sku);
+
+        $em->flush();
+
+        return $sku;
+    }
+
+    private function createCartItem(UserInterface $user, Sku $sku, int $quantity = 1, bool $selected = true): CartItem
+    {
+        $em = self::getEntityManager();
+
+        $cartItem = new CartItem();
+        $cartItem->setUser($user);
+        $cartItem->setSku($sku);
+        $cartItem->setQuantity($quantity);
+        $cartItem->setSelected($selected);
+        $em->persist($cartItem);
+        $em->flush();
+
+        return $cartItem;
     }
 
     public function testGetCartSummaryWithItems(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        // 创建带价格的SKU
+        $sku1 = $this->createTestSkuWithStock('100.00');
+        $sku2 = $this->createTestSkuWithStock('50.00');
 
-        // Create SKUs with null market price (will result in no prices)
-        $sku1 = $this->createMock(Sku::class);
-        $sku1->method('getId')->willReturn('1');
-        $sku1->method('getMarketPrice')->willReturn(null);
+        // 创建购物车项
+        $this->createCartItem($this->testUser, $sku1, 2, true);  // 200.00
+        $this->createCartItem($this->testUser, $sku2, 1, false); // 50.00 (未选中)
 
-        $sku2 = $this->createMock(Sku::class);
-        $sku2->method('getId')->willReturn('2');
-        $sku2->method('getMarketPrice')->willReturn(null);
-
-        $cartItem1 = new CartItem();
-        $cartItem1->setId('1');
-        $cartItem1->setSku($sku1);
-        $cartItem1->setQuantity(2);
-        $cartItem1->setSelected(true);
-
-        $cartItem2 = new CartItem();
-        $cartItem2->setId('2');
-        $cartItem2->setSku($sku2);
-        $cartItem2->setQuantity(1);
-        $cartItem2->setSelected(false);
-
-        $this->repository->expects($this->once())
-            ->method('findByUser')
-            ->with($user)
-            ->willReturn([$cartItem1, $cartItem2])
-        ;
-
-        $summary = $this->dataProvider->getCartSummary($user);
+        $summary = $this->dataProvider->getCartSummary($this->testUser);
 
         $this->assertInstanceOf(CartSummaryDTO::class, $summary);
         $this->assertEquals(2, $summary->getTotalItems());
-        // Since there are no prices, selected items and amounts will be 0
-        $this->assertEquals(0, $summary->getSelectedItems());
-        $this->assertEquals(0, $summary->getSelectedAmount());
-        $this->assertEquals(0, $summary->getTotalAmount());
+        $this->assertEquals(1, $summary->getSelectedItems());
+        $this->assertEquals('200.00', $summary->getSelectedAmount());
+        $this->assertEquals('250.00', $summary->getTotalAmount());
+    }
+
+    public function testGetCartSummaryWithItemsWithoutPrice(): void
+    {
+        // 创建无价格的SKU
+        $skuNoPrice = $this->createTestSkuWithoutPrice();
+        $skuWithPrice = $this->createTestSkuWithStock('100.00');
+
+        // 创建购物车项
+        $this->createCartItem($this->testUser, $skuNoPrice, 2, true);
+        $this->createCartItem($this->testUser, $skuWithPrice, 1, true);
+
+        $summary = $this->dataProvider->getCartSummary($this->testUser);
+
+        $this->assertInstanceOf(CartSummaryDTO::class, $summary);
+        $this->assertEquals(2, $summary->getTotalItems());
+        // 只有有价格的商品被计入选中金额
+        $this->assertEquals(1, $summary->getSelectedItems());
+        $this->assertEquals('100.00', $summary->getSelectedAmount());
+        $this->assertEquals('100.00', $summary->getTotalAmount());
     }
 
     public function testGetCartSummaryEmpty(): void
     {
-        $user = $this->createMock(UserInterface::class);
-
-        $this->repository->expects($this->once())
-            ->method('findByUser')
-            ->with($user)
-            ->willReturn([])
-        ;
-
-        $summary = $this->dataProvider->getCartSummary($user);
+        $summary = $this->dataProvider->getCartSummary($this->testUser);
 
         $this->assertInstanceOf(CartSummaryDTO::class, $summary);
         $this->assertEquals(0, $summary->getTotalItems());
         $this->assertEquals(0, $summary->getSelectedItems());
-        $this->assertEquals(0, $summary->getSelectedAmount());
-        $this->assertEquals(0, $summary->getTotalAmount());
+        $this->assertEquals('0.00', $summary->getSelectedAmount());
+        $this->assertEquals('0.00', $summary->getTotalAmount());
+    }
+
+    public function testGetCartItemsWithItems(): void
+    {
+        $sku = $this->createTestSkuWithStock('99.99');
+        $this->createCartItem($this->testUser, $sku, 2, true);
+
+        $items = $this->dataProvider->getCartItems($this->testUser);
+
+        $this->assertIsArray($items);
+        $this->assertCount(1, $items);
+        $this->assertInstanceOf(CartItemDTO::class, $items[0]);
+        $this->assertEquals(2, $items[0]->getQuantity());
+        $this->assertTrue($items[0]->isSelected());
     }
 
     public function testGetCartItemsEmpty(): void
     {
-        $user = $this->createMock(UserInterface::class);
-
-        $this->repository->expects($this->once())
-            ->method('findByUser')
-            ->with($user)
-            ->willReturn([])
-        ;
-
-        $items = $this->dataProvider->getCartItems($user);
+        $items = $this->dataProvider->getCartItems($this->testUser);
 
         $this->assertIsArray($items);
         $this->assertEmpty($items);
     }
 
+    public function testGetCartItemsSkipsItemsWithoutPrice(): void
+    {
+        $skuNoPrice = $this->createTestSkuWithoutPrice();
+        $skuWithPrice = $this->createTestSkuWithStock('50.00');
+
+        $this->createCartItem($this->testUser, $skuNoPrice, 1, true);
+        $this->createCartItem($this->testUser, $skuWithPrice, 2, true);
+
+        $items = $this->dataProvider->getCartItems($this->testUser);
+
+        // 只返回有价格的商品
+        $this->assertCount(1, $items);
+        $this->assertEquals(2, $items[0]->getQuantity());
+    }
+
     public function testGetSelectedItems(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        $sku1 = $this->createTestSkuWithStock('100.00');
+        $sku2 = $this->createTestSkuWithStock('50.00');
 
-        $sku1 = $this->createMock(Sku::class);
-        $sku1->method('getId')->willReturn('1');
-        $sku1->method('getFullName')->willReturn('Product 1');
-        $sku1->method('getSpu')->willReturn(null);
-        $sku1->method('getMarketPrice')->willReturn(null);
+        $this->createCartItem($this->testUser, $sku1, 2, true);  // 选中
+        $this->createCartItem($this->testUser, $sku2, 1, false); // 未选中
 
-        $cartItem1 = new CartItem();
-        $cartItem1->setId('1');
-        $cartItem1->setSku($sku1);
-        $cartItem1->setQuantity(2);
-        $cartItem1->setSelected(true);
+        $items = $this->dataProvider->getSelectedItems($this->testUser);
 
-        $this->repository->expects($this->once())
-            ->method('findSelectedByUser')
-            ->with($user)
-            ->willReturn([$cartItem1])
-        ;
+        $this->assertIsArray($items);
+        $this->assertCount(1, $items);
+        $this->assertTrue($items[0]->isSelected());
+        $this->assertEquals(2, $items[0]->getQuantity());
+    }
 
-        $stockSummary = $this->createMock(StockSummary::class);
-        $stockSummary->method('getAvailableQuantity')->willReturn(100);
+    public function testGetSelectedItemsEmpty(): void
+    {
+        $items = $this->dataProvider->getSelectedItems($this->testUser);
 
-        $this->stockService->expects($this->never())
-            ->method('getAvailableStock')
-        ;
-
-        $items = $this->dataProvider->getSelectedItems($user);
-
-        // Since there's no price, the product won't be included
         $this->assertIsArray($items);
         $this->assertEmpty($items);
     }
 
     public function testGetItemCount(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        $this->assertEquals(0, $this->dataProvider->getItemCount($this->testUser));
 
-        $this->repository->expects($this->once())
-            ->method('countByUser')
-            ->with($user)
-            ->willReturn(5)
-        ;
+        $sku1 = $this->createTestSkuWithStock();
+        $sku2 = $this->createTestSkuWithStock();
 
-        $count = $this->dataProvider->getItemCount($user);
+        $this->createCartItem($this->testUser, $sku1, 1);
+        $this->createCartItem($this->testUser, $sku2, 3);
 
-        $this->assertEquals(5, $count);
+        $count = $this->dataProvider->getItemCount($this->testUser);
+
+        $this->assertEquals(2, $count);
     }
 
     public function testGetItemByIdFound(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        $sku = $this->createTestSkuWithStock('88.88');
+        $cartItem = $this->createCartItem($this->testUser, $sku, 3, true);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
 
-        $sku = $this->createMock(Sku::class);
-        $sku->method('getId')->willReturn('1');
-        $sku->method('getFullName')->willReturn('Product 1');
-        $sku->method('getSpu')->willReturn(null);
-        $sku->method('getMarketPrice')->willReturn(null);
+        $item = $this->dataProvider->getItemById($this->testUser, $cartItemId);
 
-        $cartItem = new CartItem();
-        $cartItem->setId('1');
-        $cartItem->setSku($sku);
-        $cartItem->setQuantity(2);
-
-        $this->repository->expects($this->once())
-            ->method('findByUserAndId')
-            ->with($user, '1')
-            ->willReturn($cartItem)
-        ;
-
-        $stockSummary = $this->createMock(StockSummary::class);
-        $stockSummary->method('getAvailableQuantity')->willReturn(100);
-
-        $this->stockService->expects($this->never())
-            ->method('getAvailableStock')
-        ;
-
-        // Since there's no price, an exception will be thrown
-        $this->expectException(CartException::class);
-        $this->expectExceptionMessage('Product not found for SKU 1');
-
-        $this->dataProvider->getItemById($user, '1');
+        $this->assertInstanceOf(CartItemDTO::class, $item);
+        $this->assertEquals($cartItemId, $item->getId());
+        $this->assertEquals(3, $item->getQuantity());
+        $this->assertTrue($item->isSelected());
+        $this->assertEquals('88.88', $item->getProduct()->getPrice());
     }
 
     public function testGetItemByIdNotFound(): void
     {
-        $user = $this->createMock(UserInterface::class);
-
-        $this->repository->expects($this->once())
-            ->method('findByUserAndId')
-            ->with($user, '999')
-            ->willReturn(null)
-        ;
-
-        $item = $this->dataProvider->getItemById($user, '999');
+        $item = $this->dataProvider->getItemById($this->testUser, 'nonexistent-id');
 
         $this->assertNull($item);
     }
 
+    public function testGetItemByIdWithoutPriceThrowsException(): void
+    {
+        $skuNoPrice = $this->createTestSkuWithoutPrice();
+        $cartItem = $this->createCartItem($this->testUser, $skuNoPrice, 1, true);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
+
+        $this->expectException(CartException::class);
+        $this->expectExceptionMessage('Product not found for SKU');
+
+        $this->dataProvider->getItemById($this->testUser, $cartItemId);
+    }
+
     public function testGetSelectedCartEntities(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $sku1 = $this->createMock(Sku::class);
-        $sku1->method('getId')->willReturn('1');
+        $sku1 = $this->createTestSkuWithStock();
+        $sku2 = $this->createTestSkuWithStock();
 
-        $cartItem1 = $this->createMock(CartItem::class);
-        $cartItem1->method('getSku')->willReturn($sku1);
-        $cartItem1->method('getQuantity')->willReturn(2);
-        $cartItem1->method('isSelected')->willReturn(true);
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 2, true);
+        $this->createCartItem($this->testUser, $sku2, 1, false); // 未选中
 
-        $this->repository->expects($this->once())
-            ->method('findSelectedByUser')
-            ->with($user)
-            ->willReturn([$cartItem1])
-        ;
-
-        $entities = $this->dataProvider->getSelectedCartEntities($user);
+        $entities = $this->dataProvider->getSelectedCartEntities($this->testUser);
 
         $this->assertCount(1, $entities);
         $this->assertInstanceOf(CartItem::class, $entities[0]);
+        $this->assertEquals($cartItem1->getId(), $entities[0]->getId());
         $this->assertTrue($entities[0]->isSelected());
     }
 
     public function testGetSelectedCartEntitiesEmpty(): void
     {
-        $user = $this->createMock(UserInterface::class);
-
-        $this->repository->expects($this->once())
-            ->method('findSelectedByUser')
-            ->with($user)
-            ->willReturn([])
-        ;
-
-        $entities = $this->dataProvider->getSelectedCartEntities($user);
+        $entities = $this->dataProvider->getSelectedCartEntities($this->testUser);
 
         $this->assertIsArray($entities);
         $this->assertEmpty($entities);
+    }
+
+    public function testUserIsolation(): void
+    {
+        // 用户1添加购物车
+        $sku = $this->createTestSkuWithStock();
+        $this->createCartItem($this->testUser, $sku, 2, true);
+
+        // 创建另一个用户
+        $otherUser = $this->createUser('other_cart_data_user', 'password', ['ROLE_USER']);
+
+        // 用户2的购物车应该为空
+        $this->assertEquals(0, $this->dataProvider->getItemCount($otherUser));
+
+        $summary = $this->dataProvider->getCartSummary($otherUser);
+        $this->assertEquals(0, $summary->getTotalItems());
+
+        // 用户1的购物车有数据
+        $this->assertEquals(1, $this->dataProvider->getItemCount($this->testUser));
+    }
+
+    public function testProductDTOContainsCorrectData(): void
+    {
+        $sku = $this->createTestSkuWithStock('199.99', 500);
+        $this->createCartItem($this->testUser, $sku, 1, true);
+
+        $items = $this->dataProvider->getCartItems($this->testUser);
+
+        $this->assertCount(1, $items);
+        $product = $items[0]->getProduct();
+
+        $this->assertEquals($sku->getId(), $product->getSkuId());
+        $this->assertEquals('199.99', $product->getPrice());
+        // 库存数量从 StockService 获取
+        $this->assertGreaterThanOrEqual(0, $product->getStock());
     }
 }

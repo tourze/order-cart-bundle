@@ -17,7 +17,7 @@ use Tourze\ProductCoreBundle\Service\PriceService;
  * 负责记录用户所有的购物车相关操作
  */
 #[Autoconfigure(public: true)]
-class CartAddLogService
+final class CartAddLogService
 {
     public function __construct(
         private readonly CartAddLogRepository $repository,
@@ -204,29 +204,13 @@ class CartAddLogService
      */
     private function createPriceSnapshot(Sku $sku): array
     {
-        // 获取SKU相关的价格记录
-        $prices = $this->priceService->getPricesBySku($sku);
-        $priceData = [];
-
-        foreach ($prices as $price) {
-            $priceData[] = [
-                'id' => $price->getId(),
-                'type' => $price->getType()->value,
-                'currency' => $price->getCurrency(),
-                'price' => $price->getPrice(),
-                'taxRate' => $price->getTaxRate(),
-                'priority' => $price->getPriority(),
-                'effectTime' => $price->getEffectTime()?->format('Y-m-d H:i:s'),
-                'expireTime' => $price->getExpireTime()?->format('Y-m-d H:i:s'),
-                'canRefund' => $price->isCanRefund(),
-            ];
-        }
-
         return [
             'marketPrice' => $sku->getMarketPrice(),
             'costPrice' => $sku->getCostPrice(),
             'originalPrice' => $sku->getOriginalPrice(),
-            'prices' => $priceData,
+            'currency' => $sku->getCurrency(),
+            'integralPrice' => $sku->getIntegralPrice(),
+            'taxRate' => $sku->getTaxRate(),
             'snapshot_time' => (new \DateTimeImmutable())->format('Y-m-d H:i:s'),
         ];
     }

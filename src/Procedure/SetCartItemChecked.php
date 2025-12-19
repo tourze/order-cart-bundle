@@ -10,10 +10,12 @@ use Symfony\Component\Security\Core\User\UserInterface;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Tourze\JsonRPC\Core\Attribute\MethodDoc;
 use Tourze\JsonRPC\Core\Attribute\MethodExpose;
-use Tourze\JsonRPC\Core\Attribute\MethodParam;
 use Tourze\JsonRPC\Core\Attribute\MethodTag;
+use Tourze\JsonRPC\Core\Contracts\RpcParamInterface;
+use Tourze\JsonRPC\Core\Result\ArrayResult;
 use Tourze\JsonRPCLockBundle\Procedure\LockableProcedure;
 use Tourze\OrderCartBundle\DTO\CartOperationResponse;
+use Tourze\OrderCartBundle\Param\SetCartItemCheckedParam;
 use Tourze\OrderCartBundle\Exception\CartValidationException;
 use Tourze\OrderCartBundle\Repository\CartItemRepository;
 
@@ -24,15 +26,6 @@ use Tourze\OrderCartBundle\Repository\CartItemRepository;
 #[WithMonologChannel(channel: 'order_cart')]
 final class SetCartItemChecked extends LockableProcedure
 {
-    /**
-     * @var array<string>
-     */
-    #[MethodParam(description: '项目ID列表(最多200个)')]
-    public array $itemIds = [];
-
-    #[MethodParam(description: '选中状态')]
-    public bool $checked = false;
-
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly CartItemRepository $cartItemRepository,
@@ -42,26 +35,26 @@ final class SetCartItemChecked extends LockableProcedure
     }
 
     /**
-     * @return array<string, mixed>
+     * @phpstan-param SetCartItemCheckedParam $param
      */
-    public function execute(): array
+    public function execute(SetCartItemCheckedParam|RpcParamInterface $param): ArrayResult
     {
         try {
-            $this->validateInput();
+            $this->validateInput($param);
             $user = $this->getCurrentUser();
 
             $this->procedureLogger->info('设置购物车项目选中状态', [
                 'user_id' => $user->getUserIdentifier(),
-                'item_count' => count($this->itemIds),
-                'checked' => $this->checked,
+                'item_count' => count($param->itemIds),
+                'checked' => $param->checked,
             ]);
 
             $this->entityManager->beginTransaction();
 
             try {
-                $items = $this->cartItemRepository->findByUserAndIds($user, $this->itemIds);
+                $items = $this->cartItemRepository->findByUserAndIds($user, $param->itemIds);
                 $foundItemIds = array_map(fn ($item) => $item->getId(), $items);
-                $missingIds = array_diff($this->itemIds, $foundItemIds);
+                $missingIds = array_diff($param->itemIds, $foundItemIds);
 
                 if ([] !== $missingIds) {
                     throw CartValidationException::itemsNotFound($missingIds);
@@ -69,8 +62,8 @@ final class SetCartItemChecked extends LockableProcedure
 
                 $affectedCount = $this->cartItemRepository->batchUpdateCheckedStatus(
                     $user,
-                    $this->itemIds,
-                    $this->checked
+                    $param->itemIds,
+                    $param->checked
                 );
 
                 $totalItems = $this->cartItemRepository->countByUser($user);
@@ -82,7 +75,7 @@ final class SetCartItemChecked extends LockableProcedure
                     $affectedCount,
                     $totalItems,
                     $totalQuantity,
-                    sprintf('成功%s%d个购物车项目', $this->checked ? '勾选' : '取消勾选', $affectedCount)
+                    sprintf('成功%s%d个购物车项目', $param->checked ? '勾选' : '取消勾选', $affectedCount)
                 );
 
                 $this->procedureLogger->info('设置购物车项目选中状态完成', [
@@ -90,7 +83,7 @@ final class SetCartItemChecked extends LockableProcedure
                     'affected_count' => $response->affectedCount,
                 ]);
 
-                return $response->toArray();
+                return new ArrayResult($response->toArray());
             } catch (\Throwable $e) {
                 $this->entityManager->rollback();
                 throw $e;
@@ -103,27 +96,27 @@ final class SetCartItemChecked extends LockableProcedure
 
             $errorResponse = CartOperationResponse::failure('操作失败: ' . $e->getMessage());
 
-            return $errorResponse->toArray();
+            return new ArrayResult($errorResponse->toArray());
         }
     }
 
-    private function validateInput(): void
+    private function validateInput(SetCartItemCheckedParam $param): void
     {
-        if ([] === $this->itemIds) {
+        if ([] === $param->itemIds) {
             throw CartValidationException::emptyItemIds();
         }
 
-        if (count($this->itemIds) > 200) {
+        if (count($param->itemIds) > 200) {
             throw CartValidationException::tooManyItems();
         }
 
-        foreach ($this->itemIds as $itemId) {
+        foreach ($param->itemIds as $itemId) {
             if ('' === $itemId) {
                 throw CartValidationException::invalidItemId();
             }
         }
 
-        if (count($this->itemIds) !== count(array_unique($this->itemIds))) {
+        if (count($param->itemIds) !== count(array_unique($param->itemIds))) {
             throw CartValidationException::duplicateItemIds();
         }
     }

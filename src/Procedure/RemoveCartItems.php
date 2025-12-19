@@ -10,10 +10,12 @@ use Symfony\Component\Security\Core\User\UserInterface;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Tourze\JsonRPC\Core\Attribute\MethodDoc;
 use Tourze\JsonRPC\Core\Attribute\MethodExpose;
-use Tourze\JsonRPC\Core\Attribute\MethodParam;
 use Tourze\JsonRPC\Core\Attribute\MethodTag;
+use Tourze\JsonRPC\Core\Contracts\RpcParamInterface;
+use Tourze\JsonRPC\Core\Result\ArrayResult;
 use Tourze\JsonRPCLockBundle\Procedure\LockableProcedure;
 use Tourze\OrderCartBundle\DTO\CartOperationResponse;
+use Tourze\OrderCartBundle\Param\RemoveCartItemsParam;
 use Tourze\OrderCartBundle\Exception\CartValidationException;
 use Tourze\OrderCartBundle\Repository\CartItemRepository;
 use Tourze\OrderCartBundle\Service\CartAddLogService;
@@ -25,12 +27,6 @@ use Tourze\OrderCartBundle\Service\CartAddLogService;
 #[WithMonologChannel(channel: 'order_cart')]
 final class RemoveCartItems extends LockableProcedure
 {
-    /**
-     * @var array<string>
-     */
-    #[MethodParam(description: '项目ID列表(最多200个)')]
-    public array $itemIds = [];
-
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly CartItemRepository $cartItemRepository,
@@ -41,35 +37,35 @@ final class RemoveCartItems extends LockableProcedure
     }
 
     /**
-     * @return array<string, mixed>
+     * @phpstan-param RemoveCartItemsParam $param
      */
-    public function execute(): array
+    public function execute(RemoveCartItemsParam|RpcParamInterface $param): ArrayResult
     {
         try {
-            $this->validateInput();
+            $this->validateInput($param);
             $user = $this->getCurrentUser();
 
             $this->procedureLogger->info('删除购物车项目', [
                 'user_id' => $user->getUserIdentifier(),
-                'item_count' => count($this->itemIds),
+                'item_count' => count($param->itemIds),
             ]);
 
             $this->entityManager->beginTransaction();
 
             try {
-                $items = $this->cartItemRepository->findByUserAndIds($user, $this->itemIds);
+                $items = $this->cartItemRepository->findByUserAndIds($user, $param->itemIds);
                 $foundItemIds = array_map(fn ($item) => $item->getId(), $items);
-                $missingIds = array_diff($this->itemIds, $foundItemIds);
+                $missingIds = array_diff($param->itemIds, $foundItemIds);
 
                 if ([] !== $missingIds) {
                     throw CartValidationException::itemsNotFound($missingIds);
                 }
 
                 // 先标记日志为已删除
-                $this->cartAddLogService->batchMarkAsDeleted($this->itemIds);
+                $this->cartAddLogService->batchMarkAsDeleted($param->itemIds);
 
                 // 然后硬删除购物车项
-                $affectedCount = $this->cartItemRepository->batchDelete($user, $this->itemIds);
+                $affectedCount = $this->cartItemRepository->batchDelete($user, $param->itemIds);
 
                 $totalItems = $this->cartItemRepository->countByUser($user);
                 $totalQuantity = $this->cartItemRepository->getTotalQuantityByUser($user);
@@ -88,7 +84,7 @@ final class RemoveCartItems extends LockableProcedure
                     'affected_count' => $response->affectedCount,
                 ]);
 
-                return $response->toArray();
+                return new ArrayResult($response->toArray());
             } catch (\Throwable $e) {
                 $this->entityManager->rollback();
                 throw $e;
@@ -101,27 +97,27 @@ final class RemoveCartItems extends LockableProcedure
 
             $errorResponse = CartOperationResponse::failure('操作失败: ' . $e->getMessage());
 
-            return $errorResponse->toArray();
+            return new ArrayResult($errorResponse->toArray());
         }
     }
 
-    private function validateInput(): void
+    private function validateInput(RemoveCartItemsParam $param): void
     {
-        if ([] === $this->itemIds) {
+        if ([] === $param->itemIds) {
             throw CartValidationException::emptyItemIds();
         }
 
-        if (count($this->itemIds) > 200) {
+        if (count($param->itemIds) > 200) {
             throw CartValidationException::tooManyItems();
         }
 
-        foreach ($this->itemIds as $itemId) {
+        foreach ($param->itemIds as $itemId) {
             if ('' === $itemId) {
                 throw CartValidationException::invalidItemId();
             }
         }
 
-        if (count($this->itemIds) !== count(array_unique($this->itemIds))) {
+        if (count($param->itemIds) !== count(array_unique($param->itemIds))) {
             throw CartValidationException::duplicateItemIds();
         }
     }

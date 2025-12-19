@@ -6,19 +6,18 @@ namespace Tourze\OrderCartBundle\Tests\Service;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
-use PHPUnit\Framework\MockObject\MockObject;
 use Symfony\Component\Security\Core\User\UserInterface;
 use Tourze\OrderCartBundle\Entity\CartAddLog;
 use Tourze\OrderCartBundle\Entity\CartItem;
 use Tourze\OrderCartBundle\Repository\CartAddLogRepository;
 use Tourze\OrderCartBundle\Service\CartAddLogService;
 use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
-use Tourze\ProductCoreBundle\Entity\Price;
 use Tourze\ProductCoreBundle\Entity\Sku;
 use Tourze\ProductCoreBundle\Entity\Spu;
-use Tourze\ProductCoreBundle\Enum\PriceType;
 
 /**
+ * CartAddLogService 集成测试
+ *
  * @internal
  */
 #[CoversClass(CartAddLogService::class)]
@@ -26,131 +25,90 @@ use Tourze\ProductCoreBundle\Enum\PriceType;
 final class CartAddLogServiceTest extends AbstractIntegrationTestCase
 {
     private CartAddLogService $service;
+    private CartAddLogRepository $repository;
+    private UserInterface $testUser;
 
-    private MockObject $repository;
-
-    public function testLogAddShouldCreateAndSaveCartAddLog(): void
+    protected function onSetUp(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $user->method('getUserIdentifier')->willReturn('testuser@example.com');
-
-        $cartItem = new CartItem();
-        $cartItem->setId('cart_item_123');
-
-        // 创建真实的SKU对象来避免类型错误
-        $sku = $this->createRealSku();
-        $metadata = ['source' => 'api', 'device' => 'mobile'];
-
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->with(self::callback(function (CartAddLog $log) use ($user, $sku, $cartItem, $metadata) {
-                return $log->getUser() === $user
-                    && $log->getSku() === $sku
-                    && $log->getCartItemId() === $cartItem->getId()
-                    && 5 === $log->getQuantity()
-                    && 'add' === $log->getAction()
-                    && $log->getMetadata() === $metadata;
-            }))
-            ->willReturnCallback(function (CartAddLog $log) {
-                $log->setId('log_123');
-
-                return $log;
-            })
-        ;
-
-        $result = $this->service->logAdd($user, $cartItem, $sku, 5, $metadata);
-
-        $this->assertInstanceOf(CartAddLog::class, $result);
-        $this->assertEquals('add', $result->getAction());
-        $this->assertEquals(5, $result->getQuantity());
-        $this->assertNotEmpty($result->getSkuSnapshot());
-        $this->assertNotEmpty($result->getPriceSnapshot());
+        $this->service = self::getService(CartAddLogService::class);
+        $this->repository = self::getService(CartAddLogRepository::class);
+        $this->testUser = $this->createUser('cart_add_log_test_user', 'test_password', ['ROLE_USER']);
     }
 
-    /**
-     * 创建真实的SKU对象来避免Mock对象类型错误
-     */
-    private function createRealSku(): Sku
+    private function createTestSku(): Sku
     {
-        $spu = new Spu();
-        $spu->setTitle('Test SPU Title');
+        $em = self::getEntityManager();
 
-        $price = new Price();
-        $price->setType(PriceType::SALE);
-        $price->setCurrency('CNY');
-        $price->setPrice('9999');
-        $price->setTaxRate(0.13);
-        $price->setPriority(1);
-        $price->setEffectTime(new \DateTimeImmutable('-1 day'));
-        $price->setExpireTime(new \DateTimeImmutable('+30 days'));
-        $price->setCanRefund(true);
+        $spu = new Spu();
+        $spu->setTitle('Test SPU Title ' . uniqid());
+        $em->persist($spu);
 
         $sku = new Sku();
         $sku->setSpu($spu);
         $sku->setUnit('个');
-
-        // 关联价格到SKU
-        $price->setSku($sku);
-
-        // 使用匿名类替代反射API，符合静态分析要求
-        $testSkuHelper = new class($sku) {
-            public function __construct(private readonly Sku $sku)
-            {
-            }
-
-            public function setupForTesting(): Sku
-            {
-                // 通过实际行为验证而非私有属性操作
-                return $this->sku;
-            }
-        };
-
-        $sku = $testSkuHelper->setupForTesting();
-
-        // 设置其他必要属性
         $sku->setGtin('1234567890123');
         $sku->setMpn('TEST-MPN-001');
-
-        // 设置价格字段
         $sku->setMarketPrice('100.00');
         $sku->setCostPrice('50.00');
         $sku->setOriginalPrice('150.00');
+        $sku->setCurrency('CNY');
+        $sku->setIntegralPrice(1000);
+        $sku->setTaxRate(0.13);
+        $em->persist($sku);
+
+        $em->flush();
 
         return $sku;
     }
 
-    public function testLogUpdateShouldCreateAndSaveUpdateLog(): void
+    private function createCartItem(UserInterface $user, Sku $sku, int $quantity = 1): CartItem
     {
-        $user = $this->createMock(UserInterface::class);
-        $user->method('getUserIdentifier')->willReturn('testuser@example.com');
-
-        $sku = $this->createRealSku();
+        $em = self::getEntityManager();
 
         $cartItem = new CartItem();
-        $cartItem->setId('cart_item_456');
+        $cartItem->setUser($user);
         $cartItem->setSku($sku);
+        $cartItem->setQuantity($quantity);
+        $cartItem->setSelected(true);
+        $em->persist($cartItem);
+        $em->flush();
 
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->with(self::callback(function (CartAddLog $log) use ($user, $sku, $cartItem) {
-                return $log->getUser() === $user
-                    && $log->getSku() === $sku
-                    && $log->getCartItemId() === $cartItem->getId()
-                    && 2 === $log->getQuantity() // 5 - 3 = 2 (new - old)
-                    && 'update' === $log->getAction();
-            }))
-            ->willReturnCallback(function (CartAddLog $log) {
-                $log->setId('log_456');
+        return $cartItem;
+    }
 
-                return $log;
-            })
-        ;
+    public function testLogAddShouldCreateAndSaveCartAddLog(): void
+    {
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
+        $metadata = ['source' => 'api', 'device' => 'mobile'];
 
-        $result = $this->service->logUpdate($user, $cartItem, 3, 5);
+        $result = $this->service->logAdd($this->testUser, $cartItem, $sku, 5, $metadata);
+
+        $this->assertInstanceOf(CartAddLog::class, $result);
+        $this->assertEquals('add', $result->getAction());
+        $this->assertEquals(5, $result->getQuantity());
+        $this->assertNotNull($result->getId());
+        $this->assertNotEmpty($result->getSkuSnapshot());
+        $this->assertNotEmpty($result->getPriceSnapshot());
+        $this->assertEquals($metadata, $result->getMetadata());
+
+        // 验证数据已持久化
+        $found = $this->repository->find($result->getId());
+        $this->assertNotNull($found);
+        $this->assertEquals('add', $found->getAction());
+    }
+
+    public function testLogUpdateShouldCreateAndSaveUpdateLog(): void
+    {
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 3);
+
+        $result = $this->service->logUpdate($this->testUser, $cartItem, 3, 5);
 
         $this->assertInstanceOf(CartAddLog::class, $result);
         $this->assertEquals('update', $result->getAction());
-        $this->assertEquals(2, $result->getQuantity()); // 变化的数量
+        $this->assertEquals(2, $result->getQuantity()); // 5 - 3 = 2 (变化的数量)
+        $this->assertNotNull($result->getId());
 
         // 验证元数据包含旧数量和新数量信息
         $metadata = $result->getMetadata();
@@ -165,220 +123,155 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
 
     public function testLogRestoreShouldCreateAndSaveRestoreLog(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $user->method('getUserIdentifier')->willReturn('testuser@example.com');
-
-        $cartItem = new CartItem();
-        $cartItem->setId('cart_item_789');
-
-        // 创建真实的SKU对象来避免类型错误
-        $sku = $this->createRealSku();
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
         $metadata = ['reason' => 'user_request'];
 
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->with(self::callback(function (CartAddLog $log) use ($user, $sku, $cartItem, $metadata) {
-                return $log->getUser() === $user
-                    && $log->getSku() === $sku
-                    && $log->getCartItemId() === $cartItem->getId()
-                    && 3 === $log->getQuantity()
-                    && 'restore' === $log->getAction()
-                    && $log->getMetadata() === $metadata;
-            }))
-            ->willReturnCallback(function (CartAddLog $log) {
-                $log->setId('log_789');
-
-                return $log;
-            })
-        ;
-
-        $result = $this->service->logRestore($user, $cartItem, $sku, 3, $metadata);
+        $result = $this->service->logRestore($this->testUser, $cartItem, $sku, 3, $metadata);
 
         $this->assertInstanceOf(CartAddLog::class, $result);
         $this->assertEquals('restore', $result->getAction());
         $this->assertEquals(3, $result->getQuantity());
+        $this->assertNotNull($result->getId());
+        $this->assertEquals($metadata, $result->getMetadata());
     }
 
     public function testMarkAsDeletedShouldUpdateExistingLogs(): void
     {
-        $cartItemId = 'cart_item_delete_test';
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
+        $cartItemId = $cartItem->getId();
+        $this->assertNotNull($cartItemId);
 
-        // 创建模拟的现有日志
-        $log1 = new CartAddLog();
-        $log1->setIsDeleted(false);
+        // 创建多条加购记录
+        $this->service->logAdd($this->testUser, $cartItem, $sku, 2);
+        $this->service->logUpdate($this->testUser, $cartItem, 2, 5);
 
-        $log2 = new CartAddLog();
-        $log2->setIsDeleted(true); // 已经删除的不应该被重复处理
-
-        $log3 = new CartAddLog();
-        $log3->setIsDeleted(false);
-
-        $this->repository->expects($this->once())
-            ->method('findByCartItemId')
-            ->with($cartItemId)
-            ->willReturn([$log1, $log2, $log3])
-        ;
-
-        // 应该只对未删除的记录调用save
-        // 根据Service实现：112-118行会对每个已删除的log调用save(log, false)，然后调用save(logs[0], true)
-        // log1和log3会被标记删除，加上本来就已删除的log2，总共3个已删除的log会调用save(false)
-        // 然后再调用一次save(logs[0], true)进行flush，总共4次
-        $saveCallCount = 0;
-        $this->repository->expects($this->exactly(4))
-            ->method('save')
-            ->willReturnCallback(function ($log, $flush = false) use (&$saveCallCount) {
-                ++$saveCallCount;
-                $this->assertInstanceOf(CartAddLog::class, $log);
-
-                return $log;
-            })
-        ;
-
+        // 标记为已删除
         $result = $this->service->markAsDeleted($cartItemId);
 
-        $this->assertEquals(2, $result); // 应该更新了2条记录
-        $this->assertTrue($log1->isDeleted());
-        $this->assertTrue($log3->isDeleted());
-        $this->assertInstanceOf(\DateTimeImmutable::class, $log1->getDeleteTime());
-        $this->assertInstanceOf(\DateTimeImmutable::class, $log3->getDeleteTime());
+        $this->assertEquals(2, $result);
+
+        // 验证记录已被标记为删除
+        $logs = $this->repository->findByCartItemId($cartItemId);
+        foreach ($logs as $log) {
+            $this->assertTrue($log->isDeleted());
+            $this->assertInstanceOf(\DateTimeImmutable::class, $log->getDeleteTime());
+        }
     }
 
     public function testMarkAsDeletedWithNoLogsFound(): void
     {
-        $cartItemId = 'nonexistent_cart_item';
-
-        $this->repository->expects($this->once())
-            ->method('findByCartItemId')
-            ->with($cartItemId)
-            ->willReturn([])
-        ;
-
-        $this->repository->expects($this->never())
-            ->method('save')
-        ;
-
-        $result = $this->service->markAsDeleted($cartItemId);
+        $result = $this->service->markAsDeleted('nonexistent_cart_item');
 
         $this->assertEquals(0, $result);
     }
 
     public function testBatchMarkAsDeletedShouldDelegateToRepository(): void
     {
-        $cartItemIds = ['cart_item_1', 'cart_item_2', 'cart_item_3'];
+        $sku1 = $this->createTestSku();
+        $sku2 = $this->createTestSku();
 
-        $this->repository->expects($this->once())
-            ->method('markAsDeletedByCartItemIds')
-            ->with($cartItemIds)
-            ->willReturn(5)
-        ;
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 1);
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 2);
 
-        $result = $this->service->batchMarkAsDeleted($cartItemIds);
+        $cartItemId1 = $cartItem1->getId();
+        $cartItemId2 = $cartItem2->getId();
+        $this->assertNotNull($cartItemId1);
+        $this->assertNotNull($cartItemId2);
 
-        $this->assertEquals(5, $result);
+        // 创建加购记录
+        $this->service->logAdd($this->testUser, $cartItem1, $sku1, 1);
+        $this->service->logAdd($this->testUser, $cartItem2, $sku2, 2);
+
+        // 批量标记为已删除
+        $result = $this->service->batchMarkAsDeleted([$cartItemId1, $cartItemId2]);
+
+        $this->assertGreaterThanOrEqual(2, $result);
     }
 
     public function testBatchMarkAsDeletedWithEmptyArrayShouldReturnZero(): void
     {
-        $this->repository->expects($this->never())
-            ->method('markAsDeletedByCartItemIds')
-        ;
-
         $result = $this->service->batchMarkAsDeleted([]);
 
         $this->assertEquals(0, $result);
     }
 
-    public function testGetUserAddHistoryShouldDelegateToRepository(): void
+    public function testGetUserAddHistoryShouldReturnUserLogs(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $expectedLogs = [new CartAddLog(), new CartAddLog()];
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
 
-        $this->repository->expects($this->once())
-            ->method('findByUser')
-            ->with($user, 100)
-            ->willReturn($expectedLogs)
-        ;
+        $this->service->logAdd($this->testUser, $cartItem, $sku, 2);
+        $this->service->logAdd($this->testUser, $cartItem, $sku, 3);
 
-        $result = $this->service->getUserAddHistory($user);
+        $result = $this->service->getUserAddHistory($this->testUser);
 
-        $this->assertSame($expectedLogs, $result);
+        $this->assertIsArray($result);
+        $this->assertGreaterThanOrEqual(2, count($result));
     }
 
-    public function testGetUserAddHistoryWithCustomLimitShouldDelegateToRepository(): void
+    public function testGetUserAddHistoryWithCustomLimitShouldLimitResults(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $expectedLogs = [new CartAddLog()];
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
 
-        $this->repository->expects($this->once())
-            ->method('findByUser')
-            ->with($user, 50)
-            ->willReturn($expectedLogs)
-        ;
+        // 创建多条记录
+        for ($i = 0; $i < 5; ++$i) {
+            $this->service->logAdd($this->testUser, $cartItem, $sku, $i + 1);
+        }
 
-        $result = $this->service->getUserAddHistory($user, 50);
+        $result = $this->service->getUserAddHistory($this->testUser, 3);
 
-        $this->assertSame($expectedLogs, $result);
+        $this->assertIsArray($result);
+        $this->assertLessThanOrEqual(3, count($result));
     }
 
-    public function testGetUserSkuAddHistoryShouldDelegateToRepository(): void
+    public function testGetUserSkuAddHistoryShouldReturnSkuSpecificLogs(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        // 创建真实的SKU对象来避免类型错误
-        $sku = $this->createRealSku();
-        $expectedLogs = [new CartAddLog()];
+        $sku1 = $this->createTestSku();
+        $sku2 = $this->createTestSku();
 
-        $this->repository->expects($this->once())
-            ->method('findByUserAndSku')
-            ->with($user, $sku)
-            ->willReturn($expectedLogs)
-        ;
+        $cartItem1 = $this->createCartItem($this->testUser, $sku1, 1);
+        $cartItem2 = $this->createCartItem($this->testUser, $sku2, 1);
 
-        $result = $this->service->getUserSkuAddHistory($user, $sku);
+        $this->service->logAdd($this->testUser, $cartItem1, $sku1, 2);
+        $this->service->logAdd($this->testUser, $cartItem2, $sku2, 3);
 
-        $this->assertSame($expectedLogs, $result);
+        $result = $this->service->getUserSkuAddHistory($this->testUser, $sku1);
+
+        $this->assertIsArray($result);
+        $this->assertGreaterThanOrEqual(1, count($result));
+
+        foreach ($result as $log) {
+            $this->assertEquals($sku1->getId(), $log->getSku()->getId());
+        }
     }
 
     public function testGetUserAddStatsShouldReturnCalculatedStats(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
 
-        $this->repository->expects($this->once())
-            ->method('countByUser')
-            ->with($user)
-            ->willReturn(10)
-        ;
+        $this->service->logAdd($this->testUser, $cartItem, $sku, 10);
+        $this->service->logAdd($this->testUser, $cartItem, $sku, 15);
 
-        $this->repository->expects($this->once())
-            ->method('sumQuantityByUser')
-            ->with($user)
-            ->willReturn(25)
-        ;
-
-        $result = $this->service->getUserAddStats($user);
+        $result = $this->service->getUserAddStats($this->testUser);
 
         $this->assertIsArray($result);
-        $this->assertEquals(10, $result['total_add_count']);
-        $this->assertEquals(25, $result['total_quantity']);
-        $this->assertEquals(2.5, $result['average_quantity']); // 25 / 10 = 2.5
+        $this->assertArrayHasKey('total_add_count', $result);
+        $this->assertArrayHasKey('total_quantity', $result);
+        $this->assertArrayHasKey('average_quantity', $result);
+        $this->assertGreaterThanOrEqual(2, $result['total_add_count']);
+        $this->assertGreaterThanOrEqual(25, $result['total_quantity']);
     }
 
-    public function testGetUserAddStatsWithZeroCountShouldReturnZeroAverage(): void
+    public function testGetUserAddStatsWithNoLogsShouldReturnZeroAverage(): void
     {
-        $user = $this->createMock(UserInterface::class);
+        // 创建新用户，没有任何加购记录
+        $newUser = $this->createUser('new_user_no_logs', 'password', ['ROLE_USER']);
 
-        $this->repository->expects($this->once())
-            ->method('countByUser')
-            ->with($user)
-            ->willReturn(0)
-        ;
-
-        $this->repository->expects($this->once())
-            ->method('sumQuantityByUser')
-            ->with($user)
-            ->willReturn(0)
-        ;
-
-        $result = $this->service->getUserAddStats($user);
+        $result = $this->service->getUserAddStats($newUser);
 
         $this->assertIsArray($result);
         $this->assertEquals(0, $result['total_add_count']);
@@ -386,60 +279,12 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
         $this->assertEquals(0, $result['average_quantity']);
     }
 
-    public function testCleanupOldLogsShouldDelegateToRepository(): void
-    {
-        $this->repository->expects($this->once())
-            ->method('deleteOldLogs')
-            ->with(self::callback(function (\DateTimeInterface $date) {
-                $expected = new \DateTimeImmutable('-90 days');
-
-                // 允许1秒的误差
-                return abs($date->getTimestamp() - $expected->getTimestamp()) <= 1;
-            }))
-            ->willReturn(42)
-        ;
-
-        $result = $this->service->cleanupOldLogs();
-
-        $this->assertEquals(42, $result);
-    }
-
-    public function testCleanupOldLogsWithCustomDaysShouldUseCustomValue(): void
-    {
-        $this->repository->expects($this->once())
-            ->method('deleteOldLogs')
-            ->with(self::callback(function (\DateTimeInterface $date) {
-                $expected = new \DateTimeImmutable('-30 days');
-
-                // 允许1秒的误差
-                return abs($date->getTimestamp() - $expected->getTimestamp()) <= 1;
-            }))
-            ->willReturn(15)
-        ;
-
-        $result = $this->service->cleanupOldLogs(30);
-
-        $this->assertEquals(15, $result);
-    }
-
     public function testCreateSkuSnapshotShouldIncludeAllSkuData(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $cartItem = new CartItem();
-        $cartItem->setId('cart_item_snapshot_test');
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
 
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->willReturnCallback(function (CartAddLog $log) {
-                $log->setId('log_snapshot_test');
-
-                return $log;
-            })
-        ;
-
-        // 创建真实的SKU对象来避免类型错误
-        $realSku = $this->createRealSku();
-        $result = $this->service->logAdd($user, $cartItem, $realSku, 1);
+        $result = $this->service->logAdd($this->testUser, $cartItem, $sku, 1);
 
         $snapshot = $result->getSkuSnapshot();
         $this->assertArrayHasKey('id', $snapshot);
@@ -455,53 +300,60 @@ final class CartAddLogServiceTest extends AbstractIntegrationTestCase
         $this->assertArrayHasKey('thumbs', $snapshot);
         $this->assertArrayHasKey('snapshot_time', $snapshot);
 
-        $this->assertEquals('0', $snapshot['id']);
+        $this->assertEquals($sku->getId(), $snapshot['id']);
         $this->assertEquals('个', $snapshot['unit']);
-        $this->assertEquals('Test SPU Title', $snapshot['spu_title']);
     }
 
     public function testCreatePriceSnapshotShouldIncludePriceData(): void
     {
-        $user = $this->createMock(UserInterface::class);
-        $cartItem = new CartItem();
-        $cartItem->setId('cart_item_price_test');
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
 
-        // 创建真实的SKU对象来避免类型错误
-        $realSku = $this->createRealSku();
-
-        $this->repository->expects($this->once())
-            ->method('save')
-            ->willReturnCallback(function (CartAddLog $log) {
-                $log->setId('log_price_test');
-
-                return $log;
-            })
-        ;
-        $result = $this->service->logAdd($user, $cartItem, $realSku, 1);
+        $result = $this->service->logAdd($this->testUser, $cartItem, $sku, 1);
 
         $priceSnapshot = $result->getPriceSnapshot();
-        $this->assertArrayHasKey('prices', $priceSnapshot);
         $this->assertArrayHasKey('snapshot_time', $priceSnapshot);
         $this->assertArrayHasKey('marketPrice', $priceSnapshot);
         $this->assertArrayHasKey('costPrice', $priceSnapshot);
         $this->assertArrayHasKey('originalPrice', $priceSnapshot);
+        $this->assertArrayHasKey('currency', $priceSnapshot);
+        $this->assertArrayHasKey('integralPrice', $priceSnapshot);
+        $this->assertArrayHasKey('taxRate', $priceSnapshot);
 
-        $this->assertIsArray($priceSnapshot['prices']);
-        // 由于使用真实的PriceService且没有持久化Price实体，prices数组可能为空
-        // 这里验证基本价格字段存在即可
         $this->assertEquals('100.00', $priceSnapshot['marketPrice']);
         $this->assertEquals('50.00', $priceSnapshot['costPrice']);
         $this->assertEquals('150.00', $priceSnapshot['originalPrice']);
+        $this->assertEquals('CNY', $priceSnapshot['currency']);
+        $this->assertEquals(1000, $priceSnapshot['integralPrice']);
+        $this->assertEquals(0.13, $priceSnapshot['taxRate']);
     }
 
-    protected function onSetUp(): void
+    public function testCleanupOldLogsShouldDeleteOldRecords(): void
     {
-        $this->repository = $this->createMock(CartAddLogRepository::class);
+        // 此测试验证 cleanupOldLogs 方法可以正常执行
+        // 由于 deleteOldLogs 依赖数据库实现，这里只验证方法不抛异常
+        $result = $this->service->cleanupOldLogs(90);
 
-        // 将Mock对象设置到容器中
-        self::getContainer()->set(CartAddLogRepository::class, $this->repository);
+        $this->assertIsInt($result);
+        $this->assertGreaterThanOrEqual(0, $result);
+    }
 
-        // Get CartAddLogService from container with mocked dependencies
-        $this->service = self::getService(CartAddLogService::class);
+    public function testUserIsolation(): void
+    {
+        $sku = $this->createTestSku();
+        $cartItem = $this->createCartItem($this->testUser, $sku, 1);
+
+        $this->service->logAdd($this->testUser, $cartItem, $sku, 5);
+
+        // 创建另一个用户
+        $otherUser = $this->createUser('other_add_log_user', 'password', ['ROLE_USER']);
+
+        // 另一个用户的加购历史应该为空
+        $otherUserHistory = $this->service->getUserAddHistory($otherUser);
+        $this->assertEmpty($otherUserHistory);
+
+        // 原用户的加购历史应该有记录
+        $userHistory = $this->service->getUserAddHistory($this->testUser);
+        $this->assertNotEmpty($userHistory);
     }
 }

@@ -6,7 +6,7 @@ namespace Tourze\OrderCartBundle\DependencyInjection;
 
 use Tourze\SymfonyDependencyServiceLoader\AutoExtension;
 
-class OrderCartExtension extends AutoExtension
+final class OrderCartExtension extends AutoExtension
 {
     protected function getConfigDir(): string
     {

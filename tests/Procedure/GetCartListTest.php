@@ -9,12 +9,13 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use PHPUnit\Framework\MockObject\MockObject;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
-use Tourze\JsonRPC\Core\Tests\AbstractProcedureTestCase;
 use Tourze\OrderCartBundle\DTO\CartItemDTO;
 use Tourze\OrderCartBundle\DTO\CartSummaryDTO;
 use Tourze\OrderCartBundle\DTO\ProductDTO;
 use Tourze\OrderCartBundle\Interface\CartDataProviderInterface;
+use Tourze\OrderCartBundle\Param\GetCartListParam;
 use Tourze\OrderCartBundle\Procedure\GetCartList;
+use Tourze\PHPUnitJsonRPC\AbstractProcedureTestCase;
 
 /**
  * @internal
@@ -23,9 +24,11 @@ use Tourze\OrderCartBundle\Procedure\GetCartList;
 #[RunTestsInSeparateProcesses]
 final class GetCartListTest extends AbstractProcedureTestCase
 {
-    private CartDataProviderInterface&MockObject $cartDataProvider;
+    /** @var CartDataProviderInterface&MockObject */
+    private MockObject $cartDataProvider;
 
-    private LoggerInterface&MockObject $procedureLogger;
+    /** @var LoggerInterface&MockObject */
+    private MockObject $procedureLogger;
 
     private GetCartList $procedure;
 
@@ -64,7 +67,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
         $cartSummary = $this->createCartSummaryDTO(2, 1, 219.97, 99.99);
 
-        $this->procedure->selectedOnly = false;
+        $param = new GetCartListParam(false);
 
         $this->cartDataProvider
             ->expects($this->once())
@@ -97,9 +100,8 @@ final class GetCartListTest extends AbstractProcedureTestCase
             )
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
-        $this->assertIsArray($result);
         $this->assertArrayHasKey('items', $result);
         $this->assertArrayHasKey('summary', $result);
         self::assertIsArray($result['items']);
@@ -128,7 +130,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
         $cartSummary = $this->createCartSummaryDTO(2, 1, 219.97, 99.99);
 
-        $this->procedure->selectedOnly = true;
+        $param = new GetCartListParam(true);
 
         $this->cartDataProvider
             ->expects($this->never())
@@ -149,9 +151,8 @@ final class GetCartListTest extends AbstractProcedureTestCase
             ->willReturn($cartSummary)
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
-        $this->assertIsArray($result);
         self::assertIsArray($result['items']);
         $this->assertCount(1, $result['items']);
         self::assertIsArray($result['items'][0]);
@@ -161,7 +162,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
     public function testExecuteWithEmptyCartShouldReturnEmptyResult(): void
     {
-        $this->procedure->selectedOnly = false;
+        $param = new GetCartListParam(false);
 
         $this->cartDataProvider
             ->method('getCartItems')
@@ -178,9 +179,8 @@ final class GetCartListTest extends AbstractProcedureTestCase
             ->method('info')
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
-        $this->assertIsArray($result);
         self::assertIsArray($result['items']);
         $this->assertEmpty($result['items']);
         self::assertIsArray($result['summary']);
@@ -190,7 +190,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
     public function testExecuteWithEmptySelectedItemsShouldReturnEmptyResult(): void
     {
-        $this->procedure->selectedOnly = true;
+        $param = new GetCartListParam(true);
 
         $this->cartDataProvider
             ->method('getSelectedItems')
@@ -202,7 +202,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
             ->willReturn($this->createCartSummaryDTO(5, 0, 299.95, 0.00))
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
         self::assertIsArray($result['items']);
         $this->assertEmpty($result['items']);
@@ -213,7 +213,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
     public function testExecuteWithDataProviderExceptionShouldPropagateException(): void
     {
-        $this->procedure->selectedOnly = false;
+        $param = new GetCartListParam(false);
 
         $this->cartDataProvider
             ->method('getCartItems')
@@ -235,7 +235,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Data provider error');
 
-        $this->procedure->execute();
+        $this->procedure->execute($param);
     }
 
     public function testExecuteWithSummaryProviderExceptionShouldPropagateException(): void
@@ -244,7 +244,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
             $this->createCartItemDTO('item1', 1, true, 99.99),
         ];
 
-        $this->procedure->selectedOnly = false;
+        $param = new GetCartListParam(false);
 
         $this->cartDataProvider
             ->method('getCartItems')
@@ -264,7 +264,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Summary calculation failed');
 
-        $this->procedure->execute();
+        $this->procedure->execute($param);
     }
 
     public function testExecuteShouldLogCorrectOperationDetails(): void
@@ -275,7 +275,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
         $cartSummary = $this->createCartSummaryDTO(1, 1, 149.97, 149.97);
 
-        $this->procedure->selectedOnly = true;
+        $param = new GetCartListParam(true);
 
         $this->cartDataProvider
             ->method('getSelectedItems')
@@ -300,16 +300,15 @@ final class GetCartListTest extends AbstractProcedureTestCase
             )
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
-        $this->assertIsArray($result);
         self::assertIsArray($result['items']);
         $this->assertCount(1, $result['items']);
     }
 
     public function testExecuteWithSelectedOnlyFalseShouldLogCorrectFlag(): void
     {
-        $this->procedure->selectedOnly = false;
+        $param = new GetCartListParam(false);
 
         $this->cartDataProvider
             ->method('getCartItems')
@@ -333,7 +332,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
             )
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
         self::assertIsArray($result['items']);
         $this->assertCount(0, $result['items']);
@@ -348,7 +347,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
 
         $cartSummary = $this->createCartSummaryDTO(5, 2, 599.95, 279.97);
 
-        $this->procedure->selectedOnly = true;
+        $param = new GetCartListParam(true);
 
         $this->cartDataProvider
             ->method('getSelectedItems')
@@ -360,7 +359,7 @@ final class GetCartListTest extends AbstractProcedureTestCase
             ->willReturn($cartSummary)
         ;
 
-        $result = $this->procedure->execute();
+        $result = $this->procedure->execute($param);
 
         self::assertIsArray($result['items']);
         $this->assertCount(2, $result['items']);
