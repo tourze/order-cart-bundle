@@ -34,7 +34,7 @@
     "tourze/doctrine-timestamp-bundle": "1.1.*",
     "tourze/easy-admin-menu-bundle": "1.0.*",
     "tourze/json-rpc-core": "2.0.*",
-    "tourze/json-rpc-lock-bundle": "1.0.*",
+    "tourze/json-rpc-lock-bundle": "2.0.*",
     "tourze/lock-service-bundle": "1.0.*",
     "tourze/product-core-bundle": "1.0.*",
     "tourze/product-service-contracts": "1.0.*",
